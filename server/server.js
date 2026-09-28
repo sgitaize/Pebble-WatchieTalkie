@@ -1,5 +1,8 @@
 /**
- * psst – Server für die Pebble-App (Walkie-Talkie mit Textnachrichten)
+ * WatchieTalkie2 – Server für die Pebble-App (Walkie-Talkie mit Textnachrichten, Ende-zu-Ende-verschlüsselt)
+ *
+ * Der Server sieht nur verschlüsselte Nachrichten (NaCl box/secretbox, verschlüsselt auf dem Handy) und Metadaten
+ * (wer mit wem, wann). Öffentliche Schlüssel der Nutzer verteilt er an Kontakte und Gruppenmitglieder.
  *
  * Ohne Abhängigkeiten (nur Node-Standardmodule, Node ≥ 18). Daten liegen als JSON in data/db.json.
  * Jeder kann seinen eigenen Server betreiben; die App lässt die Server-Adresse in den Einstellungen ändern.
@@ -11,7 +14,7 @@
  *   HISTORY_MAX       Nachrichten je Chat (Standard 50)
  *   HISTORY_DAYS      Nachrichten älter als … Tage werden gelöscht (Standard 30)
  *   TIMELINE_API      Timeline-Dienst für Benachrichtigungen (Standard https://timeline-api.rebble.io, "off" = aus)
- *   SERVER_NAME       Anzeigename des Servers (Standard "psst")
+ *   SERVER_NAME       Anzeigename des Servers (Standard "WatchieTalkie2")
  */
 'use strict';
 const http = require('http');
@@ -49,19 +52,36 @@ const MAX_USERS = Number(process.env.MAX_USERS) || 1000;
 const HISTORY_MAX = Math.min(500, Number(process.env.HISTORY_MAX) || 50);
 const HISTORY_DAYS = Number(process.env.HISTORY_DAYS) || 30;
 const TIMELINE_API = process.env.TIMELINE_API || 'https://timeline-api.rebble.io';
-const SERVER_NAME = (process.env.SERVER_NAME || 'psst').slice(0, 40);
+const SERVER_NAME = (process.env.SERVER_NAME || 'WatchieTalkie2').slice(0, 40);
 
 const TEXT_MAX = 300;          // Zeichen je Nachricht
 const GROUP_MAX = 20;          // Mitglieder je Gruppe
 const GROUPS_PER_USER = 20;
 const CONTACTS_MAX = 200;
-const BODY_MAX = 8192;
-const NAME_RE = /^[a-z0-9_]{3,16}$/;
+const BODY_MAX = 32768;
+const NAME_RE = /^[a-z0-9][a-z0-9_]{2,15}$/;
+const RESERVED = new Set(['admin', 'administrator', 'root', 'system', 'support', 'server', 'watchietalkie', 'watchietalkie2', 'psst', 'pebble', 'rebble',
+  'null', 'undefined', 'constructor', 'prototype', 'hasownproperty', 'tostring', 'valueof']);
+const B64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const DEFAULT_CFG = { qr: ['OK', 'Bin unterwegs', 'Ruf mich an', 'Später', 'Ja', 'Nein', 'Danke!'], vibe: true, notify: true };
 
 /* ------------------------------------------------------------ Speicher -- */
-let db = { seq: 0, users: {}, groups: {}, chats: {} };
-try { db = Object.assign(db, JSON.parse(fs.readFileSync(DB_FILE, 'utf8'))); } catch (e) { if (e.code !== 'ENOENT') console.error('db.json nicht lesbar', e.message); }
+/* Alle Nachschlage-Tabellen ohne Prototyp: Namen wie "constructor" oder "__proto__" können nichts manipulieren */
+const dict = (o) => Object.assign(Object.create(null), o || {});
+function loadDb() {
+  const d = { seq: 0, users: dict(), groups: dict(), chats: dict() };
+  try {
+    const j = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    d.seq = Number(j.seq) || 0;
+    for (const n of Object.keys(j.users || {})) { const u = j.users[n]; u.contacts = dict(u.contacts); u.read = dict(u.read); d.users[n] = u; }
+    d.groups = dict(j.groups); d.chats = dict(j.chats);
+  } catch (e) { if (e.code !== 'ENOENT') console.error('db.json nicht lesbar', e.message); }
+  return d;
+}
+let db = loadDb();
+const byToken = new Map();            // Token-Hash → Name
+function reindex() { byToken.clear(); for (const n in db.users) byToken.set(db.users[n].th, n); }
+reindex();
 let saveTimer = null;
 function save() {
   if (saveTimer) return;
@@ -86,14 +106,13 @@ const cleanText = (s, max) => String(s == null ? '' : s).replace(/[\u0000-\u0009
 
 function newUser(name, token) {
   return { name, th: sha(token), created: now(), seen: now(), cfg: JSON.parse(JSON.stringify(DEFAULT_CFG)),
-    contacts: {}, blocked: [], groups: [], ginv: [], read: {}, tl: '' };
+    contacts: dict(), blocked: [], groups: [], ginv: [], read: dict(), tl: '', pk: '' };
 }
 function userByToken(req) {
   const m = /^Bearer\s+([a-f0-9]{64})$/i.exec(req.headers.authorization || '');
   if (!m) return null;
-  const th = sha(m[1].toLowerCase());
-  for (const n in db.users) if (db.users[n].th === th) return db.users[n];
-  return null;
+  const n = byToken.get(sha(m[1].toLowerCase()));
+  return n ? db.users[n] || null : null;
 }
 /* Chat-IDs nach außen: "u.<name>" (Direktchat) oder "g.<gruppe>" */
 function chatAccess(u, cid) {
@@ -123,7 +142,7 @@ function chatList(u) {
     const last = msgs[msgs.length - 1];
     const rd = u.read[a ? a.key : ''] || 0;
     return { id: cid, title: chatTitle(u, cid), group: cid[0] === 'g', unread: msgs.filter((x) => x.id > rd && x.f !== u.name).length,
-      last: last ? { id: last.id, f: last.f, t: last.t, ts: last.ts } : null };
+      last: last ? msgView(last, u.name) : null };
   }).sort((x, y) => ((y.last ? y.last.ts : 0) - (x.last ? x.last.ts : 0)) || x.title.localeCompare(y.title));
 }
 function meView(u) {
@@ -132,7 +151,21 @@ function meView(u) {
   return { name: u.name, cfg: u.cfg, contacts: c.ok.sort(), invitesOut: c.out.sort(), invitesIn: c.in.sort(), blocked: u.blocked.slice().sort(),
     groups: u.groups.filter((g) => db.groups[g]).map((g) => groupView(db.groups[g])),
     groupInvites: u.ginv.filter((g) => db.groups[g]).map((g) => groupView(db.groups[g])),
-    timeline: !!u.tl, server: serverInfo() };
+    timeline: !!u.tl, pubKey: u.pk || '', server: serverInfo() };
+}
+/* Nachricht für einen Leser: nur sein eigener Schlüsselumschlag */
+function msgView(m, reader) {
+  return { id: m.id, f: m.f, ts: m.ts, e: m.e ? { v: m.e.v, n: m.e.n, c: m.e.c, k: m.e.k[reader] || null } : null };
+}
+/* Verschlüsselte Nachricht prüfen: {v:1, n:Nonce, c:Chiffretext, k:{name: Umschlag}} – Klartext wird nicht angenommen */
+function cleanEnc(e, names) {
+  if (!e || typeof e !== 'object' || e.v !== 1) fail(400, 'Nachricht muss verschlüsselt sein – bitte App aktualisieren');
+  const ok = (s, min, max) => typeof s === 'string' && s.length >= min && s.length <= max && B64.test(s);
+  if (!ok(e.n, 32, 32) || !ok(e.c, 24, 2400) || !e.k || typeof e.k !== 'object') fail(400, 'Ungültige verschlüsselte Nachricht');
+  const k = dict();
+  for (const n of names) if (Object.prototype.hasOwnProperty.call(e.k, n) && ok(e.k[n], 60, 140)) k[n] = e.k[n];
+  if (!Object.keys(k).length) fail(400, 'Nachricht ohne Empfänger-Schlüssel');
+  return { v: 1, n: e.n, c: e.c, k };
 }
 function groupView(g) { return { id: g.id, title: g.title, owner: g.owner, members: g.members.slice(), invited: g.invited.slice() }; }
 function serverInfo() {
@@ -140,9 +173,9 @@ function serverInfo() {
 }
 
 /* Nachricht speichern und Empfänger benachrichtigen */
-function postMessage(u, a, text) {
+function postMessage(u, a, e) {
   const ch = chatOf(a.key);
-  const msg = { id: ++db.seq, f: u.name, t: text, ts: now() };
+  const msg = { id: ++db.seq, f: u.name, e, ts: now() };
   ch.msgs.push(msg);
   if (ch.msgs.length > HISTORY_MAX) ch.msgs.splice(0, ch.msgs.length - HISTORY_MAX);
   u.read[a.key] = msg.id;
@@ -165,9 +198,9 @@ function pushPin(r, u, a, msg) {
   if (pinsSent.length > 120) return;          // Notbremse gegen Fluten
   pinsSent.push(t);
   const title = a.group ? a.group.title + ': ' + u.name : u.name;
-  const layout = { type: 'genericPin', title, body: msg.t, tinyIcon: 'system://images/GENERIC_EMAIL' };
-  const pin = { id: 'psst-' + msg.id + '-' + r.name, time: new Date(msg.ts).toISOString(), layout,
-    createNotification: { layout: { type: 'genericNotification', title, body: msg.t, tinyIcon: 'system://images/GENERIC_EMAIL' } },
+  const layout = { type: 'genericPin', title, body: 'Neue Nachricht', tinyIcon: 'system://images/GENERIC_EMAIL' };
+  const pin = { id: 'wt-' + msg.id + '-' + r.name, time: new Date(msg.ts).toISOString(), layout,
+    createNotification: { layout: { type: 'genericNotification', title, body: 'Neue Nachricht', tinyIcon: 'system://images/GENERIC_EMAIL' } },
     actions: [{ title: 'Antworten', type: 'openWatchApp', launchCode: 1 }] };
   const body = JSON.stringify(pin);
   try {
@@ -235,10 +268,12 @@ route('POST', /^\/v1\/register$/, false, (req, b) => {
   if (limited('reg:' + clientIp(req), 10, 3600000) || limited('reg', 100, 3600000)) fail(429, 'Zu viele Registrierungen, bitte später');
   if (REGISTER_CODE && String(b.code || '') !== REGISTER_CODE) fail(403, 'Registrierungscode falsch');
   const name = needName(b.name);
+  if (RESERVED.has(name)) fail(400, 'Dieser Name ist reserviert');
   if (db.users[name]) fail(409, 'Name schon vergeben');
   if (Object.keys(db.users).length >= MAX_USERS) fail(403, 'Server ist voll');
   const token = crypto.randomBytes(32).toString('hex');
   db.users[name] = newUser(name, token);
+  byToken.set(db.users[name].th, name);
   save();
   return { name, token };
 });
@@ -253,6 +288,10 @@ route('PUT', /^\/v1\/me$/, true, (req, b, u) => {
     if (typeof c.notify === 'boolean') u.cfg.notify = c.notify;
   }
   if (typeof b.timelineToken === 'string') u.tl = cleanText(b.timelineToken, 128).replace(/[^A-Za-z0-9_-]/g, '');
+  if (typeof b.pubKey === 'string') {
+    if (!B64.test(b.pubKey) || b.pubKey.length !== 44) fail(400, 'Ungültiger öffentlicher Schlüssel');
+    if (b.pubKey !== u.pk) { u.pk = b.pubKey; u.pkTs = now(); }
+  }
   save();
   return meView(u);
 });
@@ -261,6 +300,7 @@ route('DELETE', /^\/v1\/me$/, true, (req, b, u) => {
   for (const n in u.contacts) if (db.users[n]) delete db.users[n].contacts[u.name];
   for (const gid of u.groups.concat(u.ginv)) leaveGroup(u, db.groups[gid]);
   for (const k in db.chats) if (k.startsWith('d:') && k.slice(2).split('|').includes(u.name)) delete db.chats[k];
+  byToken.delete(u.th);
   delete db.users[u.name];
   save();
   return { ok: true };
@@ -378,22 +418,31 @@ route('DELETE', /^\/v1\/groups\/(g[a-f0-9]{10})$/, true, (req, b, u, m) => {   /
   return meView(u);
 });
 
+/* Öffentliche Schlüssel aller Kontakte und Gruppenmitglieder (nur an diese, kein Verzeichnis für Fremde) */
+route('GET', /^\/v1\/keys$/, true, (req, b, u) => {
+  const names = new Set([u.name]);
+  for (const n in u.contacts) if (u.contacts[n] === 'ok') names.add(n);
+  for (const gid of u.groups) if (db.groups[gid]) db.groups[gid].members.forEach((n) => names.add(n));
+  const keys = {};
+  for (const n of names) if (db.users[n] && db.users[n].pk) keys[n] = db.users[n].pk;
+  return { keys };
+});
+
 /* Chats und Nachrichten */
 route('GET', /^\/v1\/chats$/, true, (req, b, u) => ({ seq: db.seq, chats: chatList(u), invites: meView(u).invitesIn.length + u.ginv.length }));
 route('GET', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/messages$/, true, (req, b, u, m, q) => {
   const a = chatAccess(u, m[1]);
   if (!a) fail(404, 'Chat nicht gefunden');
   const limit = Math.max(1, Math.min(HISTORY_MAX, Number(q.get('limit')) || HISTORY_MAX));
-  const msgs = ((db.chats[a.key] || {}).msgs || []).slice(-limit);
+  const msgs = ((db.chats[a.key] || {}).msgs || []).slice(-limit).map((x) => msgView(x, u.name));
   return { chat: a.cid, title: chatTitle(u, a.cid), read: u.read[a.key] || 0, msgs };
 });
 route('POST', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/messages$/, true, (req, b, u, m) => {
   const a = chatAccess(u, m[1]);
   if (!a) fail(404, 'Chat nicht gefunden');
-  const text = cleanText(b.text, TEXT_MAX);
-  if (!text) fail(400, 'Nachricht ist leer');
+  const e = cleanEnc(b.e, [u.name].concat(a.to));
   if (limited('msg:' + u.name, 30, 60000) || limited('msgh:' + u.name, 600, 3600000)) fail(429, 'Zu viele Nachrichten, bitte kurz warten');
-  return { msg: postMessage(u, a, text) };
+  return { msg: msgView(postMessage(u, a, e), u.name) };
 });
 route('POST', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/read$/, true, (req, b, u, m) => {
   const a = chatAccess(u, m[1]);
@@ -409,7 +458,7 @@ route('GET', /^\/v1\/poll$/, true, (req, b, u, m, q) => {
   if (since < db.seq) {
     for (const cid of chatList(u).map((c) => c.id)) {
       const a = chatAccess(u, cid);
-      for (const msg of (db.chats[a.key] || { msgs: [] }).msgs) if (msg.id > since && msg.f !== u.name) out.push(Object.assign({ chat: cid }, msg));
+      for (const msg of (db.chats[a.key] || { msgs: [] }).msgs) if (msg.id > since && msg.f !== u.name) out.push(Object.assign({ chat: cid }, msgView(msg, u.name)));
     }
   }
   out.sort((x, y) => x.id - y.id);
@@ -417,12 +466,12 @@ route('GET', /^\/v1\/poll$/, true, (req, b, u, m, q) => {
 });
 
 /* --------------------------------------------------------------- HTTP -- */
-const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/impressum.html': 'impressum.html', '/favicon.svg': 'favicon.svg' };
+const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/impressum.html': 'impressum.html', '/favicon.svg': 'favicon.svg', '/icon.svg': 'icon.svg' };
 const TYPES = { html: 'text/html; charset=utf-8', svg: 'image/svg+xml' };
 function send(res, status, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
-    'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff' });
+    'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
   res.end(body);
 }
 function handleReq(req, res) {
@@ -436,9 +485,11 @@ function handleReq(req, res) {
   }
   if (req.method === 'GET' && STATIC[p]) {
     const f = STATIC[p];
-    return fs.readFile(path.join(ROOT, 'public', f), (e, data) => {
+    return fs.readFile(path.join(ROOT, 'pages', f), (e, data) => {
       if (e) { res.writeHead(404); return res.end(); }
-      res.writeHead(200, { 'Content-Type': TYPES[f.split('.').pop()], 'Cache-Control': 'max-age=300' });
+      res.writeHead(200, { 'Content-Type': TYPES[f.split('.').pop()], 'Cache-Control': 'max-age=300', 'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer',
+        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'" });
       res.end(data);
     });
   }
@@ -489,7 +540,7 @@ function proxyReq(req, res) {
   const pr = http.request({ socketPath: LEADER_SOCK, path: req.url, method: req.method, headers: req.headers }, (r) => {
     res.writeHead(r.statusCode, r.headers); r.pipe(res);
   });
-  pr.on('error', () => tryLead((ok) => { if (ok) { try { db = Object.assign(db, JSON.parse(fs.readFileSync(DB_FILE, 'utf8'))); } catch (e) { /* egal */ } handleReq(req, res); } else { try { res.writeHead(503); res.end(); } catch (e) { /* egal */ } } }));
+  pr.on('error', () => tryLead((ok) => { if (ok) { db = loadDb(); reindex(); handleReq(req, res); } else { try { res.writeHead(503); res.end(); } catch (e) { /* egal */ } } }));
   req.pipe(pr);
 }
 const server = http.createServer((req, res) => (isLeader ? handleReq(req, res) : proxyReq(req, res)));
@@ -502,5 +553,5 @@ if (PP) { try { PP.configure({ autoInstall: false }); } catch (e) { console.erro
 cleanup();
 tryLead((ok) => {
   if (!ok) console.log('Weitere Instanz (pid ' + process.pid + ') – reicht an die führende weiter');
-  server.listen(PP ? 'passenger' : PORT, () => console.log('psst-Server ' + VERSION + ' läuft ' + (PP ? 'unter Passenger' : 'auf Port ' + PORT)));
+  server.listen(PP ? 'passenger' : PORT, () => console.log('WatchieTalkie-Server ' + VERSION + ' läuft ' + (PP ? 'unter Passenger' : 'auf Port ' + PORT)));
 });

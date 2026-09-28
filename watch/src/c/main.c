@@ -1,5 +1,5 @@
 /*
- * psst – Walkie-Talkie mit Textnachrichten für die Pebble.
+ * WatchieTalkie2 – Walkie-Talkie mit Textnachrichten für die Pebble (Weiterführung des früheren Watchie-Talkie).
  * Die Uhr zeigt nur an und nimmt Sprache/Schnellantworten entgegen; alles Netzwerk macht PebbleKit JS (src/pkjs).
  */
 #include <pebble.h>
@@ -29,6 +29,7 @@ enum { K_CHAT = 0, K_CONTACT_INVITE = 1, K_GROUP_INVITE = 2 };
 #define FONT_HEAD FONT_KEY_GOTHIC_14_BOLD
 #endif
 #define PAD 4
+#define ACCENT PBL_IF_COLOR_ELSE(GColorSunsetOrange, GColorBlack)
 #define ROUND_INSET PBL_IF_ROUND_ELSE(22, 0)
 #define TOP (PBL_IF_ROUND_ELSE(36, 2) + (PBL_DISPLAY_WIDTH >= 200 ? 26 : 22))
 
@@ -37,7 +38,15 @@ typedef struct { char *text; char from[17]; bool mine; int16_t h; } Msg;
 
 static Chat s_chats[MAX_CHATS];
 static int s_chat_count;
-static char s_status[64] = "Lade …";
+/* Texte: Deutsch, wenn die Uhr auf Deutsch steht, sonst Englisch */
+static bool s_de;
+enum { T_LOADING, T_EMPTY_CHAT, T_NO_QR, T_ACCEPT, T_DECLINE, T_CONTACT_REQ, T_GROUP_INV, T_NO_VOICE, T_NEW_FROM, T_SEND_FAILED };
+static const char *T_DE[] = { "Lade …", "Noch keine Nachrichten.\nSELECT: sprechen\nlang SELECT: Schnellantwort", "Keine Schnellantworten",
+  "Annehmen", "Ablehnen", "Kontaktanfrage", "Gruppeneinladung", "Sprache nicht verfügbar", "Neu von %s", "Senden fehlgeschlagen" };
+static const char *T_EN[] = { "Loading …", "No messages yet.\nSELECT: speak\nhold SELECT: quick reply", "No quick replies",
+  "Accept", "Decline", "Contact request", "Group invitation", "Voice not available", "New from %s", "Sending failed" };
+#define TR(i) (s_de ? T_DE[i] : T_EN[i])
+static char s_status[64] = "…";
 
 static Msg s_msgs[MAX_MSGS];
 static int s_msg_count;
@@ -124,7 +133,7 @@ static void measure(Msg *m) {
 }
 static int content_height(void) {
   int h = TOP;
-  if (!s_msg_count) return h + 60;
+  if (!s_msg_count) return h + (PBL_DISPLAY_WIDTH >= 200 ? 120 : 90);
   for (int i = 0; i < s_msg_count; i++) h += s_msgs[i].h;
   return h + PBL_IF_ROUND_ELSE(40, 10);
 }
@@ -136,7 +145,7 @@ static void content_update(Layer *layer, GContext *ctx) {
   graphics_draw_text(ctx, s_open_title, s_font_head, GRect(x0, y - (PBL_DISPLAY_WIDTH >= 200 ? 26 : 22), w, 24),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
   if (!s_msg_count) {
-    graphics_draw_text(ctx, s_chat_loading ? "Lade …" : "Noch keine Nachrichten.\nSELECT: sprechen\nlang SELECT: Schnellantwort",
+    graphics_draw_text(ctx, s_chat_loading ? TR(T_LOADING) : TR(T_EMPTY_CHAT),
                        s_font_body, GRect(x0, y, w, 200), GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
     return;
   }
@@ -145,7 +154,7 @@ static void content_update(Layer *layer, GContext *ctx) {
     int bw = w - 12, bx = m->mine ? x0 + 12 : x0;
     GRect bubble = GRect(bx, y + 2, bw, m->h - 6);
 #if defined(PBL_COLOR)
-    graphics_context_set_fill_color(ctx, m->mine ? GColorChromeYellow : GColorPictonBlue);
+    graphics_context_set_fill_color(ctx, m->mine ? GColorMelon : GColorLightGray);
     graphics_fill_rect(ctx, bubble, 6, GCornersAll);
 #else
     graphics_context_set_stroke_color(ctx, GColorBlack);
@@ -212,7 +221,7 @@ static void dict_done(DictationSession *session, DictationSessionStatus status, 
     chat_relayout(true);
     send_cmd(C_SEND, s_open_chat, text);
   } else if (status != DictationSessionStatusFailureTranscriptionRejected) {
-    banner_show("Sprache nicht verfügbar");
+    banner_show(TR(T_NO_VOICE));
     pick_open(0);
   }
 }
@@ -273,19 +282,18 @@ static void chat_open(Chat *c) {
 /* mode 0: Schnellantwort senden · mode 1: Einladung annehmen/ablehnen */
 static int s_pick_mode;
 static Chat s_pick_chat;
-static const char *PICK_INVITE[] = { "Annehmen", "Ablehnen" };
 static uint16_t pick_rows(MenuLayer *m, uint16_t s, void *ctx) {
   if (s_pick_mode == 1) return 2;
   return s_qr_count ? s_qr_count : 1;
 }
 static void pick_draw(GContext *ctx, const Layer *cell, MenuIndex *idx, void *data) {
-  const char *t = s_pick_mode == 1 ? PICK_INVITE[idx->row] : (s_qr_count ? s_qr[idx->row] : "Keine Schnellantworten");
+  const char *t = s_pick_mode == 1 ? TR(idx->row == 0 ? T_ACCEPT : T_DECLINE) : (s_qr_count ? s_qr[idx->row] : TR(T_NO_QR));
   menu_cell_basic_draw(ctx, cell, t, NULL, NULL);
 }
 static void pick_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
   if (s_pick_mode == 1) {
     send_cmd(idx->row == 0 ? C_ACCEPT : C_DECLINE, s_pick_chat.id, NULL);
-    snprintf(s_status, sizeof(s_status), "Lade …");
+    snprintf(s_status, sizeof(s_status), "%s", TR(T_LOADING));
   } else if (s_qr_count && s_open_chat[0]) {
     msg_append("", s_qr[idx->row], true);
     chat_relayout(true);
@@ -298,7 +306,7 @@ static void pick_load(Window *w) {
   s_pick_menu = menu_layer_create(layer_get_bounds(root));
   menu_layer_set_callbacks(s_pick_menu, NULL, (MenuLayerCallbacks) { .get_num_rows = pick_rows, .draw_row = pick_draw, .select_click = pick_select });
 #if defined(PBL_COLOR)
-  menu_layer_set_highlight_colors(s_pick_menu, GColorOrange, GColorWhite);
+  menu_layer_set_highlight_colors(s_pick_menu, ACCENT, GColorWhite);
 #endif
   menu_layer_set_click_config_onto_window(s_pick_menu, w);
   layer_add_child(root, menu_layer_get_layer(s_pick_menu));
@@ -328,8 +336,23 @@ static void main_draw(GContext *ctx, const Layer *cell, MenuIndex *idx, void *da
   char title[34];
   if (c->unread) snprintf(title, sizeof(title), "(%d) %s", c->unread, c->title);
   else snprintf(title, sizeof(title), "%s", c->title);
-  const char *sub = c->kind == K_CHAT ? c->preview : (c->kind == K_CONTACT_INVITE ? "Kontaktanfrage" : "Gruppeneinladung");
+  const char *sub = c->kind == K_CHAT ? c->preview : (c->kind == K_CONTACT_INVITE ? TR(T_CONTACT_REQ) : TR(T_GROUP_INV));
   menu_cell_basic_draw(ctx, cell, title, sub, NULL);
+}
+static int16_t main_header_h(MenuLayer *m, uint16_t s, void *ctx) { return PBL_IF_ROUND_ELSE(32, PBL_DISPLAY_WIDTH >= 200 ? 28 : 22); }
+static void main_header(GContext *ctx, const Layer *cell, uint16_t s, void *data) {
+  GRect b = layer_get_bounds(cell);
+  graphics_context_set_fill_color(ctx, ACCENT);
+  graphics_fill_rect(ctx, b, 0, GCornerNone);
+  /* Schriftzug "WatchieTalkie" weiß, die "2" in Kontrastfarbe */
+  const char *name = "WatchieTalkie";
+  GSize w1 = graphics_text_layout_get_content_size(name, s_font_head, GRect(0, 0, b.size.w, 30), GTextOverflowModeWordWrap, GTextAlignmentLeft);
+  GSize w2 = graphics_text_layout_get_content_size("2", s_font_head, GRect(0, 0, 30, 30), GTextOverflowModeWordWrap, GTextAlignmentLeft);
+  int x = (b.size.w - w1.w - w2.w - 1) / 2, y = b.size.h - (PBL_DISPLAY_WIDTH >= 200 ? 24 : 19);
+  graphics_context_set_text_color(ctx, GColorWhite);
+  graphics_draw_text(ctx, name, s_font_head, GRect(x, y, w1.w + 2, 22), GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
+  graphics_context_set_text_color(ctx, PBL_IF_COLOR_ELSE(GColorYellow, GColorWhite));
+  graphics_draw_text(ctx, "2", s_font_head, GRect(x + w1.w + 1, y, w2.w + 2, 22), GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
 }
 static void main_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
   if (!s_chat_count) return;
@@ -341,9 +364,10 @@ static void main_load(Window *w) {
   Layer *root = window_get_root_layer(w);
   s_menu = menu_layer_create(layer_get_bounds(root));
   menu_layer_set_callbacks(s_menu, NULL, (MenuLayerCallbacks) {
-    .get_num_rows = main_rows, .get_cell_height = main_row_h, .draw_row = main_draw, .select_click = main_select });
+    .get_num_rows = main_rows, .get_cell_height = main_row_h, .draw_row = main_draw, .select_click = main_select,
+    .get_header_height = main_header_h, .draw_header = main_header });
 #if defined(PBL_COLOR)
-  menu_layer_set_highlight_colors(s_menu, GColorOrange, GColorWhite);
+  menu_layer_set_highlight_colors(s_menu, ACCENT, GColorWhite);
 #endif
   menu_layer_set_click_config_onto_window(s_menu, w);
   layer_add_child(root, menu_layer_get_layer(s_menu));
@@ -386,7 +410,7 @@ static void inbox(DictionaryIterator *it, void *ctx) {
       if (s_vibe) vibes_short_pulse();
       if (!here && s_chat_win) {
         static char b[48];
-        snprintf(b, sizeof(b), "Neu von %s", str(it, MESSAGE_KEY_FROM));
+        snprintf(b, sizeof(b), TR(T_NEW_FROM), str(it, MESSAGE_KEY_FROM));
         banner_show(b);
       }
       break;
@@ -406,12 +430,14 @@ static void inbox(DictionaryIterator *it, void *ctx) {
       if (s_menu) menu_layer_reload_data(s_menu);
       break;
     case C_SENT:
-      if (!(num(it, MESSAGE_KEY_FLAGS) & 1)) { vibes_double_pulse(); banner_show(str(it, MESSAGE_KEY_TEXT)[0] ? str(it, MESSAGE_KEY_TEXT) : "Senden fehlgeschlagen"); }
+      if (!(num(it, MESSAGE_KEY_FLAGS) & 1)) { vibes_double_pulse(); banner_show(str(it, MESSAGE_KEY_TEXT)[0] ? str(it, MESSAGE_KEY_TEXT) : TR(T_SEND_FAILED)); }
       break;
   }
 }
 
 static void init(void) {
+  s_de = strncmp(i18n_get_system_locale(), "de", 2) == 0;
+  snprintf(s_status, sizeof(s_status), "%s", TR(T_LOADING));
   s_font_body = fonts_get_system_font(FONT_BODY);
   s_font_head = fonts_get_system_font(FONT_HEAD);
   app_message_register_inbox_received(inbox);

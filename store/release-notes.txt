@@ -1,0 +1,1 @@
+1.0 beta: First release of WatchieTalkie2 – dictation & quick replies, contacts, groups, end-to-end encryption, timeline notifications, all Pebble models.

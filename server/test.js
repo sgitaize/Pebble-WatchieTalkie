@@ -19,10 +19,14 @@ async function api(method, p, body, token) {
   return { status: r.status, body: j };
 }
 
+const rnd = (n) => require('crypto').randomBytes(n).toString('base64');
+/* Verschlüsselte Nachricht simulieren (Server prüft nur die Form): Umschlag je Empfänger */
+const enc = (names) => ({ v: 1, n: rnd(24), c: rnd(40), k: Object.fromEntries(names.map((x) => [x, rnd(72)])) });
+
 async function main() {
   if (!base) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'psst-'));
-    for (const f of ['server.js', 'public']) fs.cpSync(path.join(__dirname, f), path.join(dir, f), { recursive: true });
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-'));
+    for (const f of ['server.js', 'pages']) fs.cpSync(path.join(__dirname, f), path.join(dir, f), { recursive: true });
     const port = 30000 + Math.floor(Math.random() * 20000);
     child = spawn(process.execPath, [path.join(dir, 'server.js')], { env: Object.assign({}, process.env, { PORT: port, TIMELINE_API: 'off' }), stdio: 'inherit' });
     base = 'http://127.0.0.1:' + port;
@@ -48,7 +52,7 @@ async function main() {
   // Einladung A → B, B nimmt an
   let r = await api('POST', '/v1/contacts', { name: B }, ta);
   ok(r.status === 200 && r.body.invitesOut.includes(B), 'Einladung verschickt');
-  ok((await api('POST', '/v1/chats/u.' + B + '/messages', { text: 'hi' }, ta)).status === 404, 'Nachricht vor Annahme abgelehnt');
+  ok((await api('POST', '/v1/chats/u.' + B + '/messages', { e: enc([A, B]) }, ta)).status === 404, 'Nachricht vor Annahme abgelehnt');
   r = await api('GET', '/v1/me', null, tb);
   ok(r.body.invitesIn.includes(A), 'Einladung bei B sichtbar');
   r = await api('GET', '/v1/poll?since=0', null, tb);
@@ -57,24 +61,43 @@ async function main() {
   ok(r.body.contacts.includes(A), 'Einladung angenommen');
 
   // Nachrichten
-  r = await api('POST', '/v1/chats/u.' + B + '/messages', { text: '  Hallo B\u0007!  ' }, ta);
-  ok(r.status === 200 && r.body.msg.t === 'Hallo B !', 'Nachricht gesendet und bereinigt');
+  const e1 = enc([A, B]);
+  r = await api('POST', '/v1/chats/u.' + B + '/messages', { e: Object.assign({}, e1, { k: Object.assign({ fremd_x: rnd(72) }, e1.k) }) }, ta);
+  ok(r.status === 200 && r.body.msg.e.c === e1.c && r.body.msg.e.k === e1.k[A] && !r.body.msg.t, 'verschlüsselte Nachricht gesendet, nur eigener Umschlag');
   const firstId = r.body.msg.id;
   r = await api('GET', '/v1/chats', null, tb);
   ok(r.body.chats.length === 1 && r.body.chats[0].unread === 1 && r.body.chats[0].id === 'u.' + A, 'Chatliste mit Ungelesen');
   r = await api('GET', '/v1/poll?since=' + (firstId - 1), null, tb);
-  ok(r.body.msgs.length === 1 && r.body.msgs[0].chat === 'u.' + A, 'Poll liefert neue Nachricht');
+  ok(r.body.msgs.length === 1 && r.body.msgs[0].chat === 'u.' + A && r.body.msgs[0].e.k === e1.k[B], 'Poll liefert neue Nachricht mit Bs Umschlag');
   r = await api('GET', '/v1/poll?since=' + firstId, null, tb);
   ok(r.body.msgs.length === 0, 'Poll danach leer');
   await api('POST', '/v1/chats/u.' + A + '/read', { upTo: firstId }, tb);
   r = await api('GET', '/v1/chats', null, tb);
   ok(r.body.chats[0].unread === 0, 'gelesen markiert');
-  ok((await api('POST', '/v1/chats/u.' + A + '/messages', { text: 'x'.repeat(400) }, tb)).body.msg.t.length === 300, 'Text auf 300 gekürzt');
-  ok((await api('POST', '/v1/chats/u.' + A + '/messages', { text: '   ' }, tb)).status === 400, 'leere Nachricht abgelehnt');
-  for (let i = 0; i < 25; i++) await api('POST', '/v1/chats/u.' + B + '/messages', { text: 'n' + i }, ta);
+  ok((await api('POST', '/v1/chats/u.' + A + '/messages', { text: 'Klartext' }, tb)).status === 400, 'Klartext abgelehnt');
+  ok((await api('POST', '/v1/chats/u.' + A + '/messages', { e: Object.assign(enc([A, B]), { n: 'kurz' }) }, tb)).status === 400, 'kaputte Verschlüsselung abgelehnt');
+  ok((await api('POST', '/v1/chats/u.' + A + '/messages', { e: enc(['niemand']) }, tb)).status === 400, 'ohne gültigen Empfänger abgelehnt');
+  let lastId = 0;
+  for (let i = 0; i < 25; i++) lastId = (await api('POST', '/v1/chats/u.' + B + '/messages', { e: enc([A, B]) }, ta)).body.msg.id;
   r = await api('GET', '/v1/chats/u.' + A + '/messages?limit=10', null, tb);
-  ok(r.body.msgs.length === 10 && r.body.msgs[9].t === 'n24', 'Historie mit Limit');
+  ok(r.body.msgs.length === 10 && r.body.msgs[9].id === lastId, 'Historie mit Limit');
   ok((await api('GET', '/v1/chats/u.' + A + '/messages', null, tc)).status === 404, 'Fremder Chat gesperrt');
+
+  // Schlüssel: nur für Kontakte sichtbar, nicht für Fremde
+  const pkA = rnd(32), pkC = rnd(32);
+  ok((await api('PUT', '/v1/me', { pubKey: 'kaputt' }, ta)).status === 400, 'kaputter Schlüssel abgelehnt');
+  await api('PUT', '/v1/me', { pubKey: pkA }, ta); await api('PUT', '/v1/me', { pubKey: pkC }, tc);
+  r = await api('GET', '/v1/keys', null, tb);
+  ok(r.body.keys[A] === pkA && !r.body.keys[C], 'Schlüssel nur von Kontakten');
+
+  // Manipulation über Namen
+  for (const n of ['__proto__', 'constructor', 'admin', '_abc']) ok((await api('POST', '/v1/register', { name: n })).status === 400, 'Name abgelehnt: ' + n);
+  for (const n of ['constructor', '__proto__', 'hasOwnProperty']) {
+    const s = (await api('POST', '/v1/contacts', { name: n }, ta)).status;
+    ok(s === 400 || s === 404, 'Kontakt ' + n + ' → ' + s + ' (kein Absturz)');
+  }
+  ok((await api('POST', '/v1/chats/u.constructor/messages', { e: enc([A]) }, ta)).status === 404, 'Chat u.constructor gesperrt');
+  ok((await api('GET', '/v1/info')).status === 200, 'Server läuft nach Manipulationsversuchen');
 
   // Einstellungen
   r = await api('PUT', '/v1/me', { cfg: { qr: ['Ja', '', 'Nein', 'x'.repeat(60)], vibe: false }, timelineToken: 'abc-123' }, ta);
@@ -85,10 +108,10 @@ async function main() {
   r = await api('POST', '/v1/groups', { title: 'Team', members: [B] }, ta);
   const gid = r.body.groups[0].id;
   ok(r.status === 200 && r.body.groups[0].invited.includes(B), 'Gruppe erstellt, B eingeladen');
-  ok((await api('POST', '/v1/chats/g.' + gid + '/messages', { text: 'x' }, tb)).status === 404, 'Gruppe vor Annahme gesperrt');
+  ok((await api('POST', '/v1/chats/g.' + gid + '/messages', { e: enc([A, B]) }, tb)).status === 404, 'Gruppe vor Annahme gesperrt');
   r = await api('POST', '/v1/groups/' + gid + '/accept', null, tb);
   ok(r.body.groups.length === 1, 'Gruppe angenommen');
-  await api('POST', '/v1/chats/g.' + gid + '/messages', { text: 'an alle' }, tb);
+  await api('POST', '/v1/chats/g.' + gid + '/messages', { e: enc([A, B]) }, tb);
   r = await api('GET', '/v1/chats', null, ta);
   ok(r.body.chats[0].id === 'g.' + gid && r.body.chats[0].unread === 1 && r.body.chats[0].title === 'Team', 'Gruppenchat oben mit Ungelesen');
   await api('PUT', '/v1/groups/' + gid, { title: 'Crew' }, tb);
@@ -120,7 +143,7 @@ async function main() {
   ok(pre.status === 204 && pre.headers.get('access-control-allow-origin') === '*', 'CORS-Preflight');
   const bad = await fetch(base + '/v1/register', { method: 'POST', body: '{kaputt' });
   ok(bad.status === 400, 'kaputtes JSON → 400');
-  const big = await fetch(base + '/v1/register', { method: 'POST', body: 'x'.repeat(20000) }).catch(() => ({ status: 413 }));
+  const big = await fetch(base + '/v1/register', { method: 'POST', body: 'x'.repeat(40000) }).catch(() => ({ status: 413 }));
   ok(big.status === 413, 'zu großer Body → 413');
   ok((await fetch(base + '/')).status === 200 && (await fetch(base + '/impressum.html')).status === 200, 'Startseite + Impressum');
 }

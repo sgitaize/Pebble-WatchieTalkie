@@ -1,5 +1,5 @@
 {
-  "name": "psst",
+  "name": "watchietalkie",
   "author": "Simon Gutjahr",
   "version": "1.0.0",
   "keywords": [
@@ -8,7 +8,7 @@
   "private": true,
   "dependencies": {},
   "pebble": {
-    "displayName": "psst",
+    "displayName": "WatchieTalkie2",
     "uuid": "0af30c66-7eb2-4f6f-984e-26a73bd725ef",
     "sdkVersion": "3",
     "enableMultiJS": true,

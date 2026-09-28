@@ -12,7 +12,7 @@ const say = (good, msg) => { console.log((good ? '[OK]     ' : '[FEHLER] ') + ms
 
 const major = Number(process.versions.node.split('.')[0]);
 say(major >= 18, 'Node ' + process.version + (major >= 18 ? '' : ' – bitte Node 18 oder neuer wählen'));
-for (const f of ['server.js', 'public/index.html', 'public/impressum.html']) say(fs.existsSync(path.join(ROOT, f)), 'Datei vorhanden: ' + f);
+for (const f of ['server.js', 'pages/index.html', 'pages/impressum.html']) say(fs.existsSync(path.join(ROOT, f)), 'Datei vorhanden: ' + f);
 for (const d of ['data', 'tmp']) {
   try {
     const dir = path.join(ROOT, d);
