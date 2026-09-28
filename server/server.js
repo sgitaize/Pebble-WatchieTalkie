@@ -21,6 +21,24 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+/* Log-Datei für Hosting ohne Shell (per FTP lesbar): logs/app.log, höchstens 120 Zeilen/min, ab 2 MB rotiert */
+const LOG_FILE = path.join(__dirname, 'logs', 'app.log');
+let logMin = 0, logCount = 0;
+function logLine(level, args) {
+  const min = Math.floor(Date.now() / 60000);
+  if (min !== logMin) { logMin = min; logCount = 0; }
+  if (++logCount > 120) return;
+  try {
+    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+    try { if (fs.statSync(LOG_FILE).size > 2 * 1024 * 1024) fs.renameSync(LOG_FILE, LOG_FILE + '.1'); } catch (e) { /* neu */ }
+    const text = args.map((a) => (a instanceof Error ? a.stack : typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+    fs.appendFileSync(LOG_FILE, new Date().toISOString() + ' ' + level + ' ' + text + '\n');
+  } catch (e) { /* Log ist Nebensache */ }
+}
+const origLog = console.log, origErr = console.error;
+console.log = (...a) => { logLine('INFO', a); origLog(...a); };
+console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
+
 const VERSION = '1.0.0';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
