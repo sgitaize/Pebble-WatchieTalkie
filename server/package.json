@@ -1,0 +1,17 @@
+{
+  "name": "psst-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Server für psst – Walkie-Talkie mit Textnachrichten für die Pebble",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "setup": "node scripts/setup.js",
+    "test": "node test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "dependencies": {}
+}

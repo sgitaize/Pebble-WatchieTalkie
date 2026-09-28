@@ -1,0 +1,53 @@
+{
+  "name": "psst",
+  "author": "Simon Gutjahr",
+  "version": "1.0.0",
+  "keywords": [
+    "pebble-app"
+  ],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "psst",
+    "uuid": "0af30c66-7eb2-4f6f-984e-26a73bd725ef",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "aplite",
+      "basalt",
+      "chalk",
+      "diorite",
+      "emery",
+      "flint",
+      "gabbro"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "capabilities": [
+      "configurable"
+    ],
+    "messageKeys": [
+      "CMD",
+      "CHAT",
+      "TITLE",
+      "TEXT",
+      "FROM",
+      "IDX",
+      "COUNT",
+      "UNREAD",
+      "KIND",
+      "FLAGS"
+    ],
+    "resources": {
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "IMAGE_MENU_ICON",
+          "file": "images/menu_icon.png",
+          "menuIcon": true
+        }
+      ]
+    }
+  }
+}

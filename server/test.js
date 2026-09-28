@@ -1,0 +1,132 @@
+/**
+ * API-Test: startet den Server auf einem freien Port mit leerem Datenordner und spielt die Abläufe durch.
+ * Nutzung: node test.js            (gegen lokalen Server)
+ *          node test.js https://…  (gegen laufenden Server – legt Testkonten an und löscht sie wieder)
+ */
+'use strict';
+const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+let base = process.argv[2];
+let child = null, checks = 0, failed = 0;
+const ok = (cond, msg) => { checks++; if (!cond) { failed++; console.log('✗ ' + msg); } };
+async function api(method, p, body, token) {
+  const r = await fetch(base + p, { method, headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}),
+    body: body ? JSON.stringify(body) : undefined });
+  let j = null; try { j = await r.json(); } catch (e) { /* leer */ }
+  return { status: r.status, body: j };
+}
+
+async function main() {
+  if (!base) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'psst-'));
+    for (const f of ['server.js', 'public']) fs.cpSync(path.join(__dirname, f), path.join(dir, f), { recursive: true });
+    const port = 30000 + Math.floor(Math.random() * 20000);
+    child = spawn(process.execPath, [path.join(dir, 'server.js')], { env: Object.assign({}, process.env, { PORT: port, TIMELINE_API: 'off' }), stdio: 'inherit' });
+    base = 'http://127.0.0.1:' + port;
+    for (let i = 0; i < 50; i++) { try { await fetch(base + '/v1/info'); break; } catch (e) { await new Promise((r) => setTimeout(r, 100)); } }
+  }
+  base = base.replace(/\/$/, '');
+  const sfx = Math.random().toString(36).slice(2, 7);
+  const [A, B, C] = ['ta_' + sfx, 'tb_' + sfx, 'tc_' + sfx];
+
+  const info = await api('GET', '/v1/info');
+  ok(info.status === 200 && info.body.name, 'info');
+  ok((await api('POST', '/v1/register', { name: 'X' })).status === 400, 'Name zu kurz abgelehnt');
+  const ra = await api('POST', '/v1/register', { name: A });
+  const rb = await api('POST', '/v1/register', { name: B.toUpperCase() });
+  const rc = await api('POST', '/v1/register', { name: C });
+  ok(ra.status === 200 && /^[a-f0-9]{64}$/.test(ra.body.token), 'Registrierung A');
+  ok(rb.status === 200 && rb.body.name === B, 'Registrierung B (klein geschrieben)');
+  ok((await api('POST', '/v1/register', { name: A })).status === 409, 'Doppelter Name abgelehnt');
+  const [ta, tb, tc] = [ra.body.token, rb.body.token, rc.body.token];
+  ok((await api('GET', '/v1/me')).status === 401, 'ohne Token 401');
+  ok((await api('GET', '/v1/me', null, 'f'.repeat(64))).status === 401, 'falscher Token 401');
+
+  // Einladung A → B, B nimmt an
+  let r = await api('POST', '/v1/contacts', { name: B }, ta);
+  ok(r.status === 200 && r.body.invitesOut.includes(B), 'Einladung verschickt');
+  ok((await api('POST', '/v1/chats/u.' + B + '/messages', { text: 'hi' }, ta)).status === 404, 'Nachricht vor Annahme abgelehnt');
+  r = await api('GET', '/v1/me', null, tb);
+  ok(r.body.invitesIn.includes(A), 'Einladung bei B sichtbar');
+  r = await api('GET', '/v1/poll?since=0', null, tb);
+  ok(r.body.invites === 1, 'Poll meldet Einladung');
+  r = await api('POST', '/v1/contacts/' + A + '/accept', null, tb);
+  ok(r.body.contacts.includes(A), 'Einladung angenommen');
+
+  // Nachrichten
+  r = await api('POST', '/v1/chats/u.' + B + '/messages', { text: '  Hallo B\u0007!  ' }, ta);
+  ok(r.status === 200 && r.body.msg.t === 'Hallo B !', 'Nachricht gesendet und bereinigt');
+  const firstId = r.body.msg.id;
+  r = await api('GET', '/v1/chats', null, tb);
+  ok(r.body.chats.length === 1 && r.body.chats[0].unread === 1 && r.body.chats[0].id === 'u.' + A, 'Chatliste mit Ungelesen');
+  r = await api('GET', '/v1/poll?since=' + (firstId - 1), null, tb);
+  ok(r.body.msgs.length === 1 && r.body.msgs[0].chat === 'u.' + A, 'Poll liefert neue Nachricht');
+  r = await api('GET', '/v1/poll?since=' + firstId, null, tb);
+  ok(r.body.msgs.length === 0, 'Poll danach leer');
+  await api('POST', '/v1/chats/u.' + A + '/read', { upTo: firstId }, tb);
+  r = await api('GET', '/v1/chats', null, tb);
+  ok(r.body.chats[0].unread === 0, 'gelesen markiert');
+  ok((await api('POST', '/v1/chats/u.' + A + '/messages', { text: 'x'.repeat(400) }, tb)).body.msg.t.length === 300, 'Text auf 300 gekürzt');
+  ok((await api('POST', '/v1/chats/u.' + A + '/messages', { text: '   ' }, tb)).status === 400, 'leere Nachricht abgelehnt');
+  for (let i = 0; i < 25; i++) await api('POST', '/v1/chats/u.' + B + '/messages', { text: 'n' + i }, ta);
+  r = await api('GET', '/v1/chats/u.' + A + '/messages?limit=10', null, tb);
+  ok(r.body.msgs.length === 10 && r.body.msgs[9].t === 'n24', 'Historie mit Limit');
+  ok((await api('GET', '/v1/chats/u.' + A + '/messages', null, tc)).status === 404, 'Fremder Chat gesperrt');
+
+  // Einstellungen
+  r = await api('PUT', '/v1/me', { cfg: { qr: ['Ja', '', 'Nein', 'x'.repeat(60)], vibe: false }, timelineToken: 'abc-123' }, ta);
+  ok(r.body.cfg.qr.length === 3 && r.body.cfg.qr[2].length === 40 && r.body.cfg.vibe === false && r.body.timeline === true, 'Einstellungen gespeichert');
+
+  // Gruppe: A erstellt mit B; C ist kein Kontakt → Fehler
+  ok((await api('POST', '/v1/groups', { title: 'Team', members: [C] }, ta)).status === 400, 'Gruppe nur mit Kontakten');
+  r = await api('POST', '/v1/groups', { title: 'Team', members: [B] }, ta);
+  const gid = r.body.groups[0].id;
+  ok(r.status === 200 && r.body.groups[0].invited.includes(B), 'Gruppe erstellt, B eingeladen');
+  ok((await api('POST', '/v1/chats/g.' + gid + '/messages', { text: 'x' }, tb)).status === 404, 'Gruppe vor Annahme gesperrt');
+  r = await api('POST', '/v1/groups/' + gid + '/accept', null, tb);
+  ok(r.body.groups.length === 1, 'Gruppe angenommen');
+  await api('POST', '/v1/chats/g.' + gid + '/messages', { text: 'an alle' }, tb);
+  r = await api('GET', '/v1/chats', null, ta);
+  ok(r.body.chats[0].id === 'g.' + gid && r.body.chats[0].unread === 1 && r.body.chats[0].title === 'Team', 'Gruppenchat oben mit Ungelesen');
+  await api('PUT', '/v1/groups/' + gid, { title: 'Crew' }, tb);
+  r = await api('GET', '/v1/me', null, ta);
+  ok(r.body.groups[0].title === 'Crew', 'Gruppe umbenannt');
+
+  // Blockieren: C lädt A ein, A blockiert C → C kann nicht erneut sichtbar einladen
+  await api('POST', '/v1/contacts', { name: A }, tc);
+  r = await api('POST', '/v1/blocks', { name: C }, ta);
+  ok(r.body.blocked.includes(C) && !r.body.invitesIn.includes(C), 'blockiert, Einladung weg');
+  await api('POST', '/v1/contacts', { name: A }, tc);
+  r = await api('GET', '/v1/me', null, ta);
+  ok(!r.body.invitesIn.includes(C), 'Blockierter kann nicht einladen');
+  r = await api('DELETE', '/v1/blocks/' + C, null, ta);
+  ok(!r.body.blocked.includes(C), 'Blockierung aufgehoben');
+
+  // Austritt, Kontakt entfernen, Konto löschen
+  r = await api('DELETE', '/v1/groups/' + gid, null, tb);
+  ok(r.body.groups.length === 0, 'Gruppe verlassen');
+  r = await api('DELETE', '/v1/contacts/' + A, null, tb);
+  ok(!r.body.contacts.includes(A), 'Kontakt entfernt');
+  r = await api('GET', '/v1/me', null, ta);
+  ok(!r.body.contacts.includes(B), 'Kontakt beidseitig entfernt');
+  for (const t of [ta, tb, tc]) ok((await api('DELETE', '/v1/me', null, t)).status === 200, 'Konto gelöscht');
+  ok((await api('GET', '/v1/me', null, ta)).status === 401, 'Token nach Löschung ungültig');
+
+  // CORS + Robustheit
+  const pre = await fetch(base + '/v1/me', { method: 'OPTIONS' });
+  ok(pre.status === 204 && pre.headers.get('access-control-allow-origin') === '*', 'CORS-Preflight');
+  const bad = await fetch(base + '/v1/register', { method: 'POST', body: '{kaputt' });
+  ok(bad.status === 400, 'kaputtes JSON → 400');
+  const big = await fetch(base + '/v1/register', { method: 'POST', body: 'x'.repeat(20000) }).catch(() => ({ status: 413 }));
+  ok(big.status === 413, 'zu großer Body → 413');
+  ok((await fetch(base + '/')).status === 200 && (await fetch(base + '/impressum.html')).status === 200, 'Startseite + Impressum');
+}
+
+main().catch((e) => { failed++; console.log('✗ Abbruch: ' + e.stack); }).finally(() => {
+  if (child) child.kill();
+  console.log((failed ? '✗ ' : '✓ ') + (checks - failed) + '/' + checks + ' Prüfungen');
+  process.exit(failed ? 1 : 0);
+});

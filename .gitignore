@@ -1,0 +1,8 @@
+watch/build/
+node_modules/
+server/data/
+server/tmp/
+server/logs/
+.env
+*.log
+.lock-waf*

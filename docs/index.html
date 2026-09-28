@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>psst – Walkie-Talkie für die Pebble</title>
+<link rel="icon" href="favicon.svg">
+<style>
+  :root{--bg:#f6f3ef;--panel:#fff;--fg:#1b1b19;--muted:#6f6d66;--line:#e2ddd5;--accent:#c23a12}
+  @media (prefers-color-scheme: dark){:root{--bg:#121110;--panel:#1c1a19;--fg:#eeeae4;--muted:#9f9a92;--line:#302c29;--accent:#ff7a4d}}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+  main{max-width:640px;margin:0 auto;padding:28px 16px 48px}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin:0 0 14px}
+  h1{margin:8px 0 4px;font-size:32px}a{color:var(--accent)}.muted{color:var(--muted);font-size:14px}
+  img{vertical-align:middle}
+</style>
+</head>
+<body>
+<main>
+  <h1><img src="favicon.svg" width="40" height="40" alt=""> psst</h1>
+  <p>Walkie-Talkie mit Textnachrichten für die Pebble: Kontakt wählen, sprechen, fertig.</p>
+  <section>
+    <h2>Öffentlicher Server: watchietalkie.aize-it.de</h2>
+    <p id="info" class="muted">Lade Server-Infos …</p>
+    <p>Die App gibt es im Pebble-App-Store unter „psst“. Konto, Kontakte, Gruppen und Schnellantworten stellst du in der Pebble-App unter <b>Einstellungen</b> ein.</p>
+    <p>Eigenen Server betreiben? Alles ist Open Source: <a href="https://github.com/sgitaize/Pebble-WatchieTalkie">github.com/sgitaize/Pebble-WatchieTalkie</a></p>
+  </section>
+  <p class="muted"><a href="https://watchietalkie.aize-it.de/impressum.html">Impressum &amp; Datenschutz</a></p>
+</main>
+<script>
+fetch("https://watchietalkie.aize-it.de/v1/info").then(r => r.json()).then(i => {
+  document.getElementById('info').textContent = i.name + ' · Version ' + i.version + ' · Registrierung ' +
+    (i.registration === 'open' ? 'offen' : 'nur mit Code') + ' · bis ' + i.historyMax + ' Nachrichten je Chat, ' + i.historyDays + ' Tage';
+}).catch(() => { document.getElementById('info').textContent = 'Server nicht erreichbar.'; });
+</script>
+</body>
+</html>
