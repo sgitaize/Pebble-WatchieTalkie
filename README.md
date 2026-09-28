@@ -31,7 +31,7 @@ Uhr (C) ⇄ AppMessage ⇄ PebbleKit JS (Handy, ver-/entschlüsselt) ⇄ HTTPS/J
 
 ## Benutzung
 
-1. WatchieTalkie2 aus dem Pebble-App-Store installieren.
+1. WatchieTalkie2 aus dem Pebble-App-Store installieren: [apps.repebble.com/5baaf5505dcf4454bdab0478](https://apps.repebble.com/5baaf5505dcf4454bdab0478)
 2. In der Pebble-App bei WatchieTalkie2 auf **Einstellungen**: Benutzernamen wählen, Freunde per Benutzername einladen, Gruppen anlegen, Schnellantworten festlegen, **Speichern**.
 3. Auf der Uhr: Chat wählen → **SELECT** = sprechen, **SELECT lang** = Schnellantwort, **hoch/runter** = scrollen. Einladungen erscheinen oben in der Liste und lassen sich direkt auf der Uhr annehmen.
 4. Neues Handy: in den Einstellungen den **Übertragungscode** anzeigen und auf dem neuen Handy unter „Ich habe schon ein Konto“ eingeben (enthält Zugang und geheimen Schlüssel – nie weitergeben).
