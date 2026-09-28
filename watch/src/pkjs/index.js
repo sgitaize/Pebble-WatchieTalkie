@@ -73,6 +73,7 @@ function api(method, path, body, cb) {
   var x = new XMLHttpRequest();
   x.open(method, server.replace(/\/$/, '') + path, true);
   x.setRequestHeader('Content-Type', 'application/json');
+  x.setRequestHeader('Accept-Language', isDe() ? 'de' : 'en');
   if (token) x.setRequestHeader('Authorization', 'Bearer ' + token);
   x.timeout = 15000;
   x.onload = function () {

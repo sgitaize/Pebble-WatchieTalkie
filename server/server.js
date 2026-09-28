@@ -468,13 +468,35 @@ route('GET', /^\/v1\/poll$/, true, (req, b, u, m, q) => {
 /* --------------------------------------------------------------- HTTP -- */
 const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/impressum.html': 'impressum.html', '/favicon.svg': 'favicon.svg', '/icon.svg': 'icon.svg' };
 const TYPES = { html: 'text/html; charset=utf-8', svg: 'image/svg+xml' };
+/* Fehlermeldungen auf Englisch, wenn der Client nicht Deutsch spricht (Accept-Language) */
+const EN_ERR = { 'Chat nicht gefunden': 'Chat not found', 'Das bist du selbst': 'That is you', 'Dieser Name ist reserviert': 'This name is reserved',
+  'Du hast diesen Nutzer blockiert': 'You blocked this user', 'Gruppe ist voll': 'Group is full', 'Gruppe nicht gefunden': 'Group not found',
+  'Gruppenname fehlt': 'Group name missing', 'Kein Mitglied': 'Not a member', 'Keine Einladung': 'No invitation',
+  'Nachricht muss verschlüsselt sein – bitte App aktualisieren': 'Message must be encrypted – please update the app',
+  'Nachricht ohne Empfänger-Schlüssel': 'Message without recipient key', 'Name schon vergeben': 'Name already taken',
+  'Nicht angemeldet': 'Not logged in', 'Nutzer nicht gefunden': 'User not found', 'Registrierungscode falsch': 'Wrong registration code',
+  'Server ist voll': 'Server is full', 'Ungültige verschlüsselte Nachricht': 'Invalid encrypted message',
+  'Ungültiger Name (3–16 Zeichen: a–z, 0–9, _)': 'Invalid name (3–16 characters: a–z, 0–9, _)', 'Ungültiger öffentlicher Schlüssel': 'Invalid public key',
+  'Ungültiges JSON': 'Invalid JSON', 'Zu viele Einladungen, bitte später': 'Too many invitations, please try later', 'Zu viele Gruppen': 'Too many groups',
+  'Zu viele Kontakte': 'Too many contacts', 'Zu viele Nachrichten, bitte kurz warten': 'Too many messages, please wait a moment',
+  'Zu viele Registrierungen, bitte später': 'Too many registrations, please try later', 'Zu viele neue Gruppen, bitte später': 'Too many new groups, please try later',
+  'Ungültige Adresse': 'Invalid address', 'Nicht gefunden': 'Not found', 'Zu viele Anfragen': 'Too many requests', 'Zu groß': 'Too large', 'Serverfehler': 'Server error' };
+function english(msg) {
+  if (EN_ERR[msg]) return EN_ERR[msg];
+  let m = /^Keine Einladung von (.*)$/.exec(msg); if (m) return 'No invitation from ' + m[1];
+  m = /^(.*) ist nicht in deinen Kontakten$/.exec(msg); if (m) return m[1] + ' is not in your contacts';
+  return msg;
+}
 function send(res, status, obj) {
+  if (obj && obj.error && res.lang === 'en') obj = Object.assign({}, obj, { error: english(obj.error) });
   const body = JSON.stringify(obj);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
     'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
   res.end(body);
 }
 function handleReq(req, res) {
+  const al = String(req.headers['accept-language'] || '');
+  res.lang = !al || /^de/i.test(al) ? 'de' : 'en';
   let url;
   try { url = new URL(req.url, 'http://x'); } catch (e) { return send(res, 400, { error: 'Ungültige Adresse' }); }
   const p = url.pathname.replace(/^\/api(?=\/)/, '');
@@ -553,5 +575,5 @@ if (PP) { try { PP.configure({ autoInstall: false }); } catch (e) { console.erro
 cleanup();
 tryLead((ok) => {
   if (!ok) console.log('Weitere Instanz (pid ' + process.pid + ') – reicht an die führende weiter');
-  server.listen(PP ? 'passenger' : PORT, () => console.log('WatchieTalkie-Server ' + VERSION + ' läuft ' + (PP ? 'unter Passenger' : 'auf Port ' + PORT)));
+  server.listen(PP ? 'passenger' : PORT, () => console.log('WatchieTalkie2-Server ' + VERSION + ' läuft ' + (PP ? 'unter Passenger' : 'auf Port ' + PORT)));
 });
