@@ -55,6 +55,7 @@ static int s_msg_count;
 static char s_open_chat[20];
 static char s_open_title[26];
 static bool s_chat_loading;
+static bool s_chat_failed;   /* Laden fehlgeschlagen: statt „Loading …“ steht s_status im Chat */
 
 static char *s_qr[MAX_QR];
 static int s_qr_count;
@@ -165,7 +166,7 @@ static void content_update(Layer *layer, GContext *ctx) {
   graphics_draw_text(ctx, s_open_title, s_font_head, GRect(x0, y - (PBL_DISPLAY_WIDTH >= 200 ? 26 : 22), w, 24),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
   if (!s_msg_count) {
-    graphics_draw_text(ctx, s_chat_loading ? TR(T_LOADING) : TR(T_EMPTY_CHAT),
+    graphics_draw_text(ctx, s_chat_failed ? s_status : s_chat_loading ? TR(T_LOADING) : TR(T_EMPTY_CHAT),
                        s_font_body, GRect(x0, y, w, 200), GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
     return;
   }
@@ -287,11 +288,14 @@ static void chat_unload(Window *w) {
   s_open_chat[0] = 0;
   msgs_clear();
 }
+static void watchdog_arm(void);
 static void chat_open(Chat *c) {
   msgs_clear();
   strncpy(s_open_chat, c->id, sizeof(s_open_chat));
   strncpy(s_open_title, c->title, sizeof(s_open_title));
   s_chat_loading = true;
+  s_chat_failed = false;
+  watchdog_arm();
   s_chat_win = window_create();
   window_set_window_handlers(s_chat_win, (WindowHandlers) { .load = chat_load, .unload = chat_unload });
   window_stack_push(s_chat_win, true);
@@ -453,6 +457,32 @@ static void main_load(Window *w) {
 }
 static void main_unload(Window *w) { menu_layer_destroy(s_menu); }
 
+/* ------------------------------------------------------- Watchdog -- */
+/* Kommt nach einer Anfrage (Start, Chat öffnen) gar nichts vom Handy zurück, nicht ewig „Loading …“ zeigen:
+   Meldung anzeigen und die Anfrage wiederholen. Serverfehler meldet und wiederholt das Handy selbst. */
+static AppTimer *s_wd_timer;
+static uint32_t s_rx, s_rx_mark;
+static void watchdog_fire(void *ctx) {
+  s_wd_timer = NULL;
+  if (s_rx != s_rx_mark) return;                 /* Handy hat geantwortet */
+  bool shown = s_chat_win ? (s_chat_loading || s_chat_failed) : !s_chat_count;
+  if (shown) {
+    snprintf(s_status, sizeof(s_status), "%s", connection_service_peek_pebble_app_connection()
+             ? "No answer from phone.\nRetrying ..." : "Phone not connected.\nRetrying ...");
+    if (s_chat_win) { s_chat_failed = true; chat_relayout(false); }
+    else main_reload();
+  }
+  if (s_chat_win && s_chat_loading) send_cmd(C_OPEN, s_open_chat, NULL);
+  else if (!s_chat_win) send_cmd(C_READY, NULL, NULL);
+  else return;
+  s_wd_timer = app_timer_register(30000, watchdog_fire, NULL);
+}
+static void watchdog_arm(void) {
+  s_rx_mark = s_rx;
+  if (s_wd_timer) app_timer_cancel(s_wd_timer);
+  s_wd_timer = app_timer_register(20000, watchdog_fire, NULL);
+}
+
 /* ------------------------------------------------------ Empfangen -- */
 static const char *str(DictionaryIterator *it, uint32_t key) { Tuple *t = dict_find(it, key); return t ? t->value->cstring : ""; }
 static int num(DictionaryIterator *it, uint32_t key) { Tuple *t = dict_find(it, key); return t ? (int)t->value->int32 : 0; }
@@ -460,6 +490,7 @@ static void copy(char *dst, size_t n, const char *src) { strncpy(dst, src, n - 1
 
 static void inbox(DictionaryIterator *it, void *ctx) {
   int cmd = num(it, MESSAGE_KEY_CMD), idx = num(it, MESSAGE_KEY_IDX), count = num(it, MESSAGE_KEY_COUNT);
+  s_rx++;
   switch (cmd) {
     case C_LIST_ITEM:
       if (idx == 0) s_chat_count = 0;
@@ -478,6 +509,7 @@ static void inbox(DictionaryIterator *it, void *ctx) {
       if (strcmp(str(it, MESSAGE_KEY_CHAT), s_open_chat) != 0) break;
       if (idx == 0) msgs_clear();
       s_chat_loading = false;
+      s_chat_failed = false;
       if (count > 0 && idx == s_msg_count && idx < MAX_MSGS)
         msg_set(&s_msgs[s_msg_count++], str(it, MESSAGE_KEY_FROM), str(it, MESSAGE_KEY_TEXT), num(it, MESSAGE_KEY_FLAGS) & 1);
       if (!s_chat_win) break;
@@ -507,7 +539,10 @@ static void inbox(DictionaryIterator *it, void *ctx) {
       break;
     case C_STATUS:
       copy(s_status, sizeof(s_status), str(it, MESSAGE_KEY_TEXT));
-      if (s_chat_win) { if (s_chat_loading) { s_chat_loading = false; chat_relayout(false); } banner_show(s_status); }
+      if (s_chat_win) {
+        if (s_chat_loading || s_chat_failed) { s_chat_failed = true; chat_relayout(false); }   /* Fehler bleibt sichtbar, bis Nachrichten kommen */
+        else banner_show(s_status);
+      }
       main_reload();
       break;
     case C_SENT:
@@ -532,6 +567,7 @@ static void init(void) {
   window_set_window_handlers(s_main_win, (WindowHandlers) { .load = main_load, .unload = main_unload });
   window_stack_push(s_main_win, true);
   send_cmd(C_READY, NULL, NULL);
+  watchdog_arm();
 }
 static void deinit(void) {
 #if defined(PBL_MICROPHONE)

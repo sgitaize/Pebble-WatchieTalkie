@@ -21,6 +21,7 @@ var seq = -1;                // höchste bekannte Nachrichten-Nummer
 var lastInvites = 0;
 var openChat = '';
 var pollTimer = null;
+var listOk = false;          // Chat-Liste steht (auch leer) auf der Uhr
 
 function platform() {
   try { return Pebble.getActiveWatchInfo().platform; } catch (e) { return 'basalt'; }
@@ -67,16 +68,35 @@ function api(method, path, body, cb) {
   x.setRequestHeader('Content-Type', 'application/json');
   x.setRequestHeader('Accept-Language', 'en');
   if (token) x.setRequestHeader('Authorization', 'Bearer ' + token);
-  x.timeout = path.indexOf('wait=') >= 0 ? 40000 : 15000;
+  var ms = path.indexOf('wait=') >= 0 ? 40000 : 15000, done = false;
+  x.timeout = ms;
+  /* eigene Zeitgrenze zusätzlich zu x.timeout – nicht jede Handy-App löst ontimeout zuverlässig aus */
+  var guard = setTimeout(function () { finish({ status: 0, message: 'Server not responding' }); try { x.abort(); } catch (e) { /* egal */ } }, ms + 2000);
+  function finish(err, j) { if (done) return; done = true; clearTimeout(guard); cb(err, j); }
   x.onload = function () {
     var j = null;
     try { j = JSON.parse(x.responseText); } catch (e) { /* leer */ }
-    if (x.status >= 200 && x.status < 300) cb(null, j || {});
-    else cb({ status: x.status, message: (j && j.error) || ('Error ' + x.status) });
+    if (x.status >= 200 && x.status < 300) finish(null, j || {});
+    else finish({ status: x.status, message: (j && j.error) || ('Error ' + x.status) });
   };
-  x.onerror = x.ontimeout = function () { cb({ status: 0, message: 'Server unreachable' }); };
+  x.onerror = x.ontimeout = function () { finish({ status: 0, message: 'Server unreachable' }); };
   x.send(body ? JSON.stringify(body) : null);
 }
+/* Vorübergehende Fehler (offline, Server down/überlastet) → automatisch erneut versuchen */
+function transient(err) { return !err.status || err.status === 408 || err.status === 429 || err.status >= 500; }
+function errText(err) {
+  if (!err.status) return err.message;
+  return transient(err) ? 'Server busy or down (' + err.status + ')' : err.message;
+}
+var retries = {};            // Schlüssel → { t: Timer, d: letzte Wartezeit in s }; 5 → 10 → 20 → 40 → 60 s
+function retryLater(key, fn) {
+  var r = retries[key] || (retries[key] = { t: null, d: 0 });
+  if (r.t) return r.d;       // schon geplant (z. B. zwei parallele Anfragen gescheitert)
+  r.d = Math.min(r.d ? r.d * 2 : 5, 60);
+  r.t = setTimeout(function () { r.t = null; fn(); }, r.d * 1000);
+  return r.d;
+}
+function retryDone(key) { var r = retries[key]; if (r) { clearTimeout(r.t); r.t = null; r.d = 0; } }
 
 function sendQuickReplies() {
   var qr = (me && me.cfg && me.cfg.qr) || [];
@@ -125,6 +145,21 @@ function recipients(cid) {
 }
 function changedList() { try { return JSON.parse(localStorage.getItem('wt.changed') || '[]'); } catch (e) { return []; } }
 
+/* Liste konnte nicht geladen werden: bei Server-/Netzproblemen automatisch neu versuchen.
+   Steht schon eine Liste auf der Uhr, bleibt sie stehen und es wird still weiter versucht. */
+function listFailed(err) {
+  if (!transient(err)) {
+    retryDone('list');
+    toWatch({ CMD: C.LIST_ITEM, IDX: 0, COUNT: 0 });
+    listOk = false;
+    return status(err.status === 401 ? 'Login invalid. Please set up again in the settings.' : err.message);
+  }
+  var s = retryLater('list', loadChats);
+  if (listOk) return;
+  toWatch({ CMD: C.LIST_ITEM, IDX: 0, COUNT: 0 });
+  status(errText(err) + '. Retrying in ' + s + ' s ... (SELECT: retry now)');
+}
+
 function loadChats() {
   if (!token) {
     toWatch({ CMD: C.LIST_ITEM, IDX: 0, COUNT: 0 });
@@ -132,10 +167,7 @@ function loadChats() {
     return;
   }
   api('GET', '/v1/me', null, function (err, m) {
-    if (err) {
-      toWatch({ CMD: C.LIST_ITEM, IDX: 0, COUNT: 0 });
-      return status(err.status === 401 ? 'Login invalid. Please set up again in the settings.' : err.message);
-    }
+    if (err) return listFailed(err);
     me = m;
     sendQuickReplies();
     if (!E2E.ready()) {
@@ -144,7 +176,9 @@ function loadChats() {
     }
     if (m.pubKey !== E2E.publicKey()) api('PUT', '/v1/me', { pubKey: E2E.publicKey() }, function () {});
     loadKeys(function () { api('GET', '/v1/chats', null, function (err2, c) {
-      if (err2) return status(err2.message);
+      if (err2) return listFailed(err2);
+      retryDone('list');
+      listOk = true;
       if (seq < 0) seq = c.seq;
       var items = [];
       m.invitesIn.forEach(function (n) { items.push({ id: 'u.' + n, title: n, kind: K.CONTACT_INVITE, unread: 0, text: '' }); });
@@ -171,7 +205,12 @@ function loadChats() {
 function loadMessages(cid) {
   api('GET', '/v1/chats/' + cid + '/messages?limit=' + maxMsgs(), null, function (err, r) {
     if (openChat !== cid) return;
-    if (err) return status(err.message);
+    if (err && !transient(err)) return status(err.message);
+    if (err) {
+      var s = retryLater('msgs', function () { if (openChat === cid) loadMessages(cid); });
+      return status(errText(err) + '. Retrying in ' + s + ' s ...');
+    }
+    retryDone('msgs');
     var msgs = r.msgs || [];
     if (!msgs.length) { toWatch({ CMD: C.MSG_ITEM, CHAT: cid, IDX: 0, COUNT: 0 }); return; }
     var bytes = platform() === 'aplite' ? 200 : 400;
@@ -191,7 +230,7 @@ function sendMessage(cid, text, voice) {
   var e;
   try { e = E2E.encrypt(String(text).slice(0, TEXT_MAX), r.keys); } catch (x) { return fail('Encryption failed'); }
   api('POST', '/v1/chats/' + cid + '/messages', { e: e, voice: !!voice }, function (err) {
-    toWatch(err ? { CMD: C.SENT, FLAGS: 0, TEXT: trunc(err.message, 60) } : { CMD: C.SENT, FLAGS: 1 });
+    toWatch(err ? { CMD: C.SENT, FLAGS: 0, TEXT: trunc(errText(err), 60) } : { CMD: C.SENT, FLAGS: 1 });
   });
 }
 
@@ -214,7 +253,8 @@ function deleteLast(cid) {
 
 /* Testnachricht vom Server anfordern – kommt wie eine echte Nachricht über das Polling */
 function requestTest() {
-  if (!token || !me) return status('Not set up yet. Open the WatchieTalkie2 settings in the Pebble app.');
+  if (!token) return status('Not set up yet. Open the WatchieTalkie2 settings in the Pebble app.');
+  if (!me || !listOk) { status('Loading ...'); return loadChats(); }   // Liste fehlt noch (Serverfehler): SELECT = sofort neu versuchen
   status('Requesting test message ...');
   api('POST', '/v1/test', { delay: 0 }, function (err) { if (err) status(err.message); });
 }
@@ -288,7 +328,7 @@ Pebble.addEventListener('appmessage', function (e) {
   var cmd = p.CMD, cid = p.CHAT || '';
   if (cmd === C.READY) loadChats();
   else if (cmd === C.OPEN) { openChat = cid; loadMessages(cid); }
-  else if (cmd === C.CLOSE) { openChat = ''; loadChats(); }
+  else if (cmd === C.CLOSE) { openChat = ''; retryDone('msgs'); loadChats(); }
   else if ((cmd === C.SEND || cmd === C.SEND_VOICE) && p.TEXT) sendMessage(cid, p.TEXT, cmd === C.SEND_VOICE);
   else if (cmd === C.ACCEPT) answerInvite(cid, true);
   else if (cmd === C.DECLINE) answerInvite(cid, false);
@@ -315,7 +355,7 @@ Pebble.addEventListener('webviewclosed', function (e) {
   if (typeof d.token === 'string' && (d.token === '' || /^[a-f0-9]{64}$/.test(d.token))) { token = d.token; localStorage.setItem('wt.token', token); }
   if (typeof d.sk === 'string' && d.sk) E2E.setKeys(d.sk, d.seed || '');
   if (d.ackChanged) localStorage.removeItem('wt.changed');
-  seq = -1; me = null;
+  seq = -1; me = null; listOk = false;
   loadChats();
   registerTimeline();
 });
