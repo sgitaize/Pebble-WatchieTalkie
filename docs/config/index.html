@@ -103,6 +103,7 @@
     <section>
       <h2 data-en="Watch">Uhr</h2>
       <div class="check"><input type="checkbox" id="vibe"><label data-en="Vibrate on new message (app open)" for="vibe" style="margin:0;color:inherit">Vibrieren bei neuer Nachricht (App offen)</label></div>
+      <div class="check"><input type="checkbox" id="beep"><label for="beep" style="margin:0;color:inherit" data-en="Radio beep on new message (watches with speaker: Time 2, Pebble 2 Duo, Round 2)">Funk-Piep bei neuer Nachricht (Uhren mit Lautsprecher: Time 2, Pebble 2 Duo, Round 2)</label></div>
       <div class="check"><input type="checkbox" id="notify"><label data-en="Notify when the app is closed (timeline)" for="notify" style="margin:0;color:inherit">Benachrichtigung, wenn die App zu ist (Timeline)</label></div>
       <p class="muted" id="timelineInfo"></p>
     </section>
@@ -227,6 +228,7 @@ function render() {
   if (!$('qr').dataset.touched) $('qr').value = (me.cfg.qr || []).join('\n');
   $('vibe').checked = me.cfg.vibe !== false;
   $('notify').checked = me.cfg.notify !== false;
+  $('beep').checked = me.cfg.beep !== false;
   $('timelineInfo').textContent = me.timeline
     ? T('Deine Uhr ist für Timeline-Benachrichtigungen angemeldet.', 'Your watch is registered for timeline notifications.')
     : T('Noch kein Timeline-Token: klappt nur, wenn WatchieTalkie2 aus dem Pebble-App-Store installiert ist. Die App meldet sich beim nächsten Öffnen automatisch an.', 'No timeline token yet: only works if WatchieTalkie2 was installed from the Pebble app store. The app registers automatically the next time it opens.');
@@ -292,7 +294,7 @@ $('saveBtn').onclick = async () => {
   if (me) {
     try {
       const qr = $('qr').value.split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 10);
-      await api('PUT', '/v1/me', { cfg: { qr, vibe: $('vibe').checked, notify: $('notify').checked } });
+      await api('PUT', '/v1/me', { cfg: { qr, vibe: $('vibe').checked, notify: $('notify').checked, beep: $('beep').checked } });
     } catch (e) { return flash(e.message); }
   }
   if (token) ensureKeys();

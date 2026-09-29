@@ -39,9 +39,9 @@ async function main() {
   const info = await api('GET', '/v1/info');
   ok(info.status === 200 && info.body.name, 'info');
   ok((await api('POST', '/v1/register', { name: 'X' })).status === 400, 'Name zu kurz abgelehnt');
-  const ra = await api('POST', '/v1/register', { name: A });
-  const rb = await api('POST', '/v1/register', { name: B.toUpperCase() });
-  const rc = await api('POST', '/v1/register', { name: C });
+  const ra = await api('POST', '/v1/register', { name: A , test: true });
+  const rb = await api('POST', '/v1/register', { name: B.toUpperCase() , test: true });
+  const rc = await api('POST', '/v1/register', { name: C , test: true });
   ok(ra.status === 200 && /^[a-f0-9]{64}$/.test(ra.body.token), 'Registrierung A');
   ok(rb.status === 200 && rb.body.name === B, 'Registrierung B (klein geschrieben)');
   ok((await api('POST', '/v1/register', { name: A })).status === 409, 'Doppelter Name abgelehnt');
@@ -82,6 +82,29 @@ async function main() {
   r = await api('GET', '/v1/chats/u.' + A + '/messages?limit=10', null, tb);
   ok(r.body.msgs.length === 10 && r.body.msgs[9].id === lastId, 'Historie mit Limit');
   ok((await api('GET', '/v1/chats/u.' + A + '/messages', null, tc)).status === 404, 'Fremder Chat gesperrt');
+
+  // Long-Polling: ohne Neues wartet die Abfrage, eine neue Nachricht weckt sie sofort
+  const st0 = (await api('GET', '/v1/stats')).body;
+  let t0 = Date.now();
+  r = await api('GET', '/v1/poll?wait=2&since=' + lastId, null, tb);
+  ok(r.body.msgs.length === 0 && Date.now() - t0 >= 1800, 'Long-Poll wartet ohne Neues');
+  t0 = Date.now();
+  const pending = api('GET', '/v1/poll?wait=15&since=' + lastId, null, tb);
+  await new Promise((res) => setTimeout(res, 300));
+  await api('POST', '/v1/chats/u.' + B + '/messages', { e: enc([A, B]), voice: true }, ta);
+  r = await pending;
+  ok(r.body.msgs.length === 1 && Date.now() - t0 < 3000, 'Long-Poll wird durch neue Nachricht sofort geweckt');
+  lastId = r.body.seq;
+  const st1 = (await api('GET', '/v1/stats')).body;
+  ok(st1.messages === st0.messages && st1.voice === st0.voice, 'Testkonten zählen nicht in der Statistik');
+  // nur lokal: echte Konten würden die Live-Statistik verändern
+  if (child) { const rx = await api('POST', '/v1/register', { name: 'tx_' + sfx }); const rz = await api('POST', '/v1/register', { name: 'tz_' + sfx });
+    await api('POST', '/v1/contacts', { name: 'tz_' + sfx }, rx.body.token); await api('POST', '/v1/contacts/tx_' + sfx + '/accept', null, rz.body.token);
+    await api('POST', '/v1/chats/u.tz_' + sfx + '/messages', { e: enc(['tx_' + sfx, 'tz_' + sfx]), voice: true }, rx.body.token);
+    const st2 = (await api('GET', '/v1/stats')).body;
+    ok(st2.messages === st0.messages + 1 && st2.voice === st0.voice + 1 && st2.users === st0.users + 2, 'Statistik zählt echte Nachrichten, Sprache und Nutzer');
+    await api('DELETE', '/v1/me', null, rx.body.token); await api('DELETE', '/v1/me', null, rz.body.token); }
+  ok(typeof info.body.donate === 'string', 'Spendenlink in /v1/info');
 
   // Schlüssel: nur für Kontakte sichtbar, nicht für Fremde
   const pkA = rnd(32), pkC = rnd(32);

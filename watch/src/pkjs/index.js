@@ -8,7 +8,7 @@ E2E.init({ get: function (k) { return localStorage.getItem(k); }, set: function 
 var DEFAULT_SERVER = 'https://watchietalkie.aize-it.de';
 var CONFIG_URL = 'https://sgitaize.github.io/Pebble-WatchieTalkie/config/';
 var C = { LIST_ITEM: 2, MSG_ITEM: 5, NEW_MSG: 7, QR_ITEM: 8, STATUS: 9, SENT: 10,
-  READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25 };
+  READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25, SEND_VOICE: 26 };
 var K = { CHAT: 0, CONTACT_INVITE: 1, GROUP_INVITE: 2 };
 
 var server = localStorage.getItem('wt.server') || DEFAULT_SERVER;
@@ -19,7 +19,6 @@ var me = null;               // Antwort von /v1/me
 var seq = -1;                // höchste bekannte Nachrichten-Nummer
 var lastInvites = 0;
 var openChat = '';
-var lastActivity = Date.now();
 var pollTimer = null;
 
 function platform() {
@@ -75,7 +74,7 @@ function api(method, path, body, cb) {
   x.setRequestHeader('Content-Type', 'application/json');
   x.setRequestHeader('Accept-Language', isDe() ? 'de' : 'en');
   if (token) x.setRequestHeader('Authorization', 'Bearer ' + token);
-  x.timeout = 15000;
+  x.timeout = path.indexOf('wait=') >= 0 ? 40000 : 15000;
   x.onload = function () {
     var j = null;
     try { j = JSON.parse(x.responseText); } catch (e) { /* leer */ }
@@ -88,7 +87,7 @@ function api(method, path, body, cb) {
 
 function sendQuickReplies() {
   var qr = (me && me.cfg && me.cfg.qr) || [];
-  var vibe = !me || !me.cfg || me.cfg.vibe !== false ? 1 : 0;
+  var vibe = (!me || !me.cfg || me.cfg.vibe !== false ? 1 : 0) | (!me || !me.cfg || me.cfg.beep !== false ? 2 : 0);
   if (!qr.length) { toWatch({ CMD: C.QR_ITEM, IDX: 0, COUNT: 0, FLAGS: vibe }); return; }
   for (var i = 0; i < qr.length && i < 10; i++) toWatch({ CMD: C.QR_ITEM, IDX: i, COUNT: qr.length, TEXT: trunc(qr[i], 60), FLAGS: vibe });
 }
@@ -189,14 +188,14 @@ function loadMessages(cid) {
   });
 }
 
-function sendMessage(cid, text) {
+function sendMessage(cid, text, voice) {
   var fail = function (msg) { toWatch({ CMD: C.SENT, FLAGS: 0, TEXT: trunc(msg, 60) }); };
   if (!me || !E2E.ready()) return fail(L('Nicht eingerichtet', 'Not set up'));
   var r = recipients(cid);
   if (r.total && r.missing.length === r.total) return fail(r.missing.join(', ') + L(' muss WatchieTalkie2 erst öffnen', ' must open WatchieTalkie2 first'));
   var e;
   try { e = E2E.encrypt(String(text).slice(0, TEXT_MAX), r.keys); } catch (x) { return fail(L('Verschlüsseln fehlgeschlagen', 'Encryption failed')); }
-  api('POST', '/v1/chats/' + cid + '/messages', { e: e }, function (err) {
+  api('POST', '/v1/chats/' + cid + '/messages', { e: e, voice: !!voice }, function (err) {
     toWatch(err ? { CMD: C.SENT, FLAGS: 0, TEXT: trunc(err.message, 60) } : { CMD: C.SENT, FLAGS: 1 });
   });
 }
@@ -209,31 +208,33 @@ function answerInvite(cid, accept) {
 }
 
 /* ---------------------------------------------------------------- Polling -- */
-/* Nur solange die App offen ist: erst alle 5 s, nach 3 min Ruhe alle 15 s, nach 10 min alle 30 s. */
-function schedulePoll() {
-  clearTimeout(pollTimer);
-  var idle = Date.now() - lastActivity;
-  pollTimer = setTimeout(poll, idle < 180000 ? 5000 : (idle < 600000 ? 15000 : 30000));
-}
+/* Long-Polling, nur solange die App offen ist: eine Anfrage wartet bis zu 25 s auf dem Server und kommt
+   sofort zurück, wenn etwas Neues da ist. Spart Funk (Akku) gegenüber festen Intervallen und ist schneller. */
 var polling = false;
+function schedulePoll(delay) {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(poll, delay || 0);
+}
 function poll() {
   if (polling) return;
-  if (!token || seq < 0) return schedulePoll();
+  if (!token || seq < 0) return schedulePoll(3000);
   polling = true;
-  api('GET', '/v1/poll?since=' + seq, null, function (err, r) {
+  api('GET', '/v1/poll?wait=25&since=' + seq + '&invites=' + lastInvites, null, function (err, r) {
     polling = false;
-    if (!err && r.seq >= seq) {
-      var fresh = r.msgs || [];
-      fresh = fresh.filter(function (msg) { return msg.id > seq; });
+    if (err) return schedulePoll(15000);              // offline oder Server weg: in Ruhe erneut versuchen
+    var fresh = [];
+    if (r.seq >= seq) {
+      fresh = (r.msgs || []).filter(function (msg) { return msg.id > seq; });
       fresh.forEach(function (msg) {
         toWatch({ CMD: C.NEW_MSG, CHAT: msg.chat, FROM: msg.f, TEXT: trunc(readable(msg), platform() === 'aplite' ? 200 : 400) });
         if (msg.chat === openChat) api('POST', '/v1/chats/' + msg.chat + '/read', { upTo: msg.id }, function () {});
       });
       seq = Math.max(seq, r.seq);
-      if (fresh.length) lastActivity = Date.now();
-      if (fresh.length || r.invites !== lastInvites) loadChats();
     }
-    schedulePoll();
+    var invitesChanged = r.invites !== lastInvites;
+    lastInvites = r.invites;
+    if (fresh.length || invitesChanged) loadChats();
+    schedulePoll(500);
   });
 }
 
@@ -258,14 +259,12 @@ Pebble.addEventListener('ready', function () {
 Pebble.addEventListener('appmessage', function (e) {
   var p = e.payload || {};
   var cmd = p.CMD, cid = p.CHAT || '';
-  lastActivity = Date.now();
   if (cmd === C.READY) loadChats();
   else if (cmd === C.OPEN) { openChat = cid; loadMessages(cid); }
   else if (cmd === C.CLOSE) { openChat = ''; loadChats(); }
-  else if (cmd === C.SEND && p.TEXT) sendMessage(cid, p.TEXT);
+  else if ((cmd === C.SEND || cmd === C.SEND_VOICE) && p.TEXT) sendMessage(cid, p.TEXT, cmd === C.SEND_VOICE);
   else if (cmd === C.ACCEPT) answerInvite(cid, true);
   else if (cmd === C.DECLINE) answerInvite(cid, false);
-  schedulePoll();
 });
 
 Pebble.addEventListener('showConfiguration', function () {

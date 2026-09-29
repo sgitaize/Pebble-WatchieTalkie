@@ -15,6 +15,7 @@
  *   HISTORY_DAYS      Nachrichten älter als … Tage werden gelöscht (Standard 30)
  *   TIMELINE_API      Timeline-Dienst für Benachrichtigungen (Standard https://timeline-api.rebble.io, "off" = aus)
  *   SERVER_NAME       Anzeigename des Servers (Standard "WatchieTalkie2")
+ *   DONATE_URL        Spendenlink auf der Info-Seite (Standard: Projekt-Spendenlink, "off" = ausblenden)
  */
 'use strict';
 const http = require('http');
@@ -42,7 +43,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -53,6 +54,8 @@ const HISTORY_MAX = Math.min(500, Number(process.env.HISTORY_MAX) || 50);
 const HISTORY_DAYS = Number(process.env.HISTORY_DAYS) || 30;
 const TIMELINE_API = process.env.TIMELINE_API || 'https://timeline-api.rebble.io';
 const SERVER_NAME = (process.env.SERVER_NAME || 'WatchieTalkie2').slice(0, 40);
+const DONATE_URL = process.env.DONATE_URL === 'off' ? '' : (process.env.DONATE_URL || 'https://www.paypal.com/donate/?hosted_button_id=LGAZB9PR4YV5L');
+const POLL_WAIT_MAX = 25;      // Sekunden, die /v1/poll auf Neues wartet (Long-Polling spart Akku)
 
 const TEXT_MAX = 300;          // Zeichen je Nachricht
 const GROUP_MAX = 20;          // Mitglieder je Gruppe
@@ -63,16 +66,17 @@ const NAME_RE = /^[a-z0-9][a-z0-9_]{2,15}$/;
 const RESERVED = new Set(['admin', 'administrator', 'root', 'system', 'support', 'server', 'watchietalkie', 'watchietalkie2', 'psst', 'pebble', 'rebble',
   'null', 'undefined', 'constructor', 'prototype', 'hasownproperty', 'tostring', 'valueof']);
 const B64 = /^[A-Za-z0-9+/]+={0,2}$/;
-const DEFAULT_CFG = { qr: ['OK', 'Bin unterwegs', 'Ruf mich an', 'Später', 'Ja', 'Nein', 'Danke!'], vibe: true, notify: true };
+const DEFAULT_CFG = { qr: ['OK', 'Bin unterwegs', 'Ruf mich an', 'Später', 'Ja', 'Nein', 'Danke!'], vibe: true, notify: true, beep: true };
 
 /* ------------------------------------------------------------ Speicher -- */
 /* Alle Nachschlage-Tabellen ohne Prototyp: Namen wie "constructor" oder "__proto__" können nichts manipulieren */
 const dict = (o) => Object.assign(Object.create(null), o || {});
 function loadDb() {
-  const d = { seq: 0, users: dict(), groups: dict(), chats: dict() };
+  const d = { seq: 0, users: dict(), groups: dict(), chats: dict(), stats: { messages: 0, voice: 0, since: Date.now() } };
   try {
     const j = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     d.seq = Number(j.seq) || 0;
+    if (j.stats) d.stats = { messages: Number(j.stats.messages) || 0, voice: Number(j.stats.voice) || 0, since: Number(j.stats.since) || Date.now() };
     for (const n of Object.keys(j.users || {})) { const u = j.users[n]; u.contacts = dict(u.contacts); u.read = dict(u.read); d.users[n] = u; }
     d.groups = dict(j.groups); d.chats = dict(j.chats);
   } catch (e) { if (e.code !== 'ENOENT') console.error('db.json nicht lesbar', e.message); }
@@ -169,17 +173,19 @@ function cleanEnc(e, names) {
 }
 function groupView(g) { return { id: g.id, title: g.title, owner: g.owner, members: g.members.slice(), invited: g.invited.slice() }; }
 function serverInfo() {
-  return { name: SERVER_NAME, version: VERSION, registration: REGISTER_CODE ? 'code' : 'open', historyMax: HISTORY_MAX, historyDays: HISTORY_DAYS, textMax: TEXT_MAX };
+  return { donate: DONATE_URL, name: SERVER_NAME, version: VERSION, registration: REGISTER_CODE ? 'code' : 'open', historyMax: HISTORY_MAX, historyDays: HISTORY_DAYS, textMax: TEXT_MAX };
 }
 
 /* Nachricht speichern und Empfänger benachrichtigen */
-function postMessage(u, a, e) {
+function postMessage(u, a, e, voice) {
   const ch = chatOf(a.key);
   const msg = { id: ++db.seq, f: u.name, e, ts: now() };
   ch.msgs.push(msg);
   if (ch.msgs.length > HISTORY_MAX) ch.msgs.splice(0, ch.msgs.length - HISTORY_MAX);
   u.read[a.key] = msg.id;
+  if (!u.test) { db.stats.messages++; if (voice) db.stats.voice++; }
   save();
+  for (const n of a.to) wake(n);
   for (const n of a.to) {
     const r = db.users[n];
     if (r && r.tl && r.cfg.notify !== false && !r.blocked.includes(u.name)) pushPin(r, u, a, msg);
@@ -265,7 +271,7 @@ const route = (method, re, auth, fn) => routes.push({ method, re, auth, fn });
 route('GET', /^\/v1\/info$/, false, () => serverInfo());
 
 route('POST', /^\/v1\/register$/, false, (req, b) => {
-  if (limited('reg:' + clientIp(req), 10, 3600000) || limited('reg', 100, 3600000)) fail(429, 'Zu viele Registrierungen, bitte später');
+  if (limited('reg:' + clientIp(req), 20, 3600000) || limited('reg', 100, 3600000)) fail(429, 'Zu viele Registrierungen, bitte später');
   if (REGISTER_CODE && String(b.code || '') !== REGISTER_CODE) fail(403, 'Registrierungscode falsch');
   const name = needName(b.name);
   if (RESERVED.has(name)) fail(400, 'Dieser Name ist reserviert');
@@ -273,6 +279,7 @@ route('POST', /^\/v1\/register$/, false, (req, b) => {
   if (Object.keys(db.users).length >= MAX_USERS) fail(403, 'Server ist voll');
   const token = crypto.randomBytes(32).toString('hex');
   db.users[name] = newUser(name, token);
+  if (b.test === true) db.users[name].test = true;      // Testkonten zählen nicht in der Statistik
   byToken.set(db.users[name].th, name);
   save();
   return { name, token };
@@ -286,6 +293,7 @@ route('PUT', /^\/v1\/me$/, true, (req, b, u) => {
     if (Array.isArray(c.qr)) u.cfg.qr = c.qr.map((x) => cleanText(x, 40)).filter(Boolean).slice(0, 10);
     if (typeof c.vibe === 'boolean') u.cfg.vibe = c.vibe;
     if (typeof c.notify === 'boolean') u.cfg.notify = c.notify;
+    if (typeof c.beep === 'boolean') u.cfg.beep = c.beep;
   }
   if (typeof b.timelineToken === 'string') u.tl = cleanText(b.timelineToken, 128).replace(/[^A-Za-z0-9_-]/g, '');
   if (typeof b.pubKey === 'string') {
@@ -316,7 +324,7 @@ route('POST', /^\/v1\/contacts$/, true, (req, b, u) => {
   const st = u.contacts[r.name];
   if (st === 'ok' || st === 'out') return meView(u);
   if (st === 'in') { u.contacts[r.name] = 'ok'; r.contacts[u.name] = 'ok'; }
-  else if (!r.blocked.includes(u.name)) { u.contacts[r.name] = 'out'; r.contacts[u.name] = 'in'; }
+  else if (!r.blocked.includes(u.name)) { u.contacts[r.name] = 'out'; r.contacts[u.name] = 'in'; wake(r.name); }
   else u.contacts[r.name] = 'out';             // Blockiert: sieht für den Absender aus wie eine offene Einladung
   save();
   return meView(u);
@@ -370,6 +378,7 @@ function inviteToGroup(u, g, name) {
   if (r.blocked.includes(u.name)) return;
   g.invited.push(r.name);
   if (!r.ginv.includes(g.id)) r.ginv.push(g.id);
+  wake(r.name);
 }
 route('POST', /^\/v1\/groups$/, true, (req, b, u) => {
   const title = cleanText(b.title, 24);
@@ -442,7 +451,7 @@ route('POST', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/messages$/, true, (req, b,
   if (!a) fail(404, 'Chat nicht gefunden');
   const e = cleanEnc(b.e, [u.name].concat(a.to));
   if (limited('msg:' + u.name, 30, 60000) || limited('msgh:' + u.name, 600, 3600000)) fail(429, 'Zu viele Nachrichten, bitte kurz warten');
-  return { msg: msgView(postMessage(u, a, e), u.name) };
+  return { msg: msgView(postMessage(u, a, e, b.voice === true), u.name) };
 });
 route('POST', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/read$/, true, (req, b, u, m) => {
   const a = chatAccess(u, m[1]);
@@ -452,8 +461,20 @@ route('POST', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/read$/, true, (req, b, u, 
   return { ok: true };
 });
 /* Alles Neue seit "since" (Nachrichten-Nummer) – ein Aufruf reicht fürs Polling */
-route('GET', /^\/v1\/poll$/, true, (req, b, u, m, q) => {
-  const since = Number(q.get('since')) || 0;
+/* Öffentliche Statistik für die Info-Seite (nur Zähler, nichts Persönliches) */
+route('GET', /^\/v1\/stats$/, false, () => ({ users: Object.values(db.users).filter((x) => !x.test).length, groups: Object.keys(db.groups).length,
+  messages: db.stats.messages, voice: db.stats.voice, since: db.stats.since, version: VERSION, name: SERVER_NAME }));
+
+/* Long-Polling: Wartende Abfragen je Nutzer; neue Nachrichten/Einladungen wecken sie sofort */
+const waiters = new Map();            // Name → Set von Weck-Funktionen
+let waiterCount = 0;
+function wake(name) {
+  const set = waiters.get(name);
+  if (!set) return;
+  waiters.delete(name);
+  for (const fn of set) fn();
+}
+function pollResult(u, since) {
   const out = [];
   if (since < db.seq) {
     for (const cid of chatList(u).map((c) => c.id)) {
@@ -463,6 +484,28 @@ route('GET', /^\/v1\/poll$/, true, (req, b, u, m, q) => {
   }
   out.sort((x, y) => x.id - y.id);
   return { seq: db.seq, msgs: out.slice(-50), invites: meView(u).invitesIn.length + u.ginv.length };
+}
+route('GET', /^\/v1\/poll$/, true, (req, b, u, m, q) => {
+  const since = Number(q.get('since')) || 0;
+  const wait = Math.max(0, Math.min(POLL_WAIT_MAX, Number(q.get('wait')) || 0));
+  const invites = Number(q.get('invites'));
+  const first = pollResult(u, since);
+  const changed = first.msgs.length || (q.has('invites') && invites !== first.invites);
+  const set = waiters.get(u.name);
+  if (!wait || changed || waiterCount >= 2000 || (set && set.size >= 3)) return first;
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true; waiterCount--; clearTimeout(timer);
+      const s = waiters.get(u.name); if (s) { s.delete(finish); if (!s.size) waiters.delete(u.name); }
+      resolve(db.users[u.name] ? pollResult(u, since) : { seq: db.seq, msgs: [], invites: 0 });
+    };
+    const timer = setTimeout(finish, wait * 1000);
+    waiterCount++;
+    if (!waiters.has(u.name)) waiters.set(u.name, new Set());
+    waiters.get(u.name).add(finish);
+    if (req.wtRes) req.wtRes.on('close', finish);
+  });
 });
 
 /* --------------------------------------------------------------- HTTP -- */
@@ -515,6 +558,7 @@ function handleReq(req, res) {
       res.end(data);
     });
   }
+  req.wtRes = res;
   const r = routes.find((x) => x.method === req.method && x.re.test(p));
   if (!r) return send(res, 404, { error: 'Nicht gefunden' });
   if (limited('ip:' + clientIp(req), 600, 60000)) return send(res, 429, { error: 'Zu viele Anfragen' });
@@ -533,7 +577,9 @@ function handleReq(req, res) {
         if (!u) fail(401, 'Nicht angemeldet');
         if (now() - u.seen > 60000) { u.seen = now(); save(); }
       }
-      send(res, 200, r.fn(req, body, u, r.re.exec(p), url.searchParams));
+      const out = r.fn(req, body, u, r.re.exec(p), url.searchParams);
+      if (out && typeof out.then === 'function') out.then((x) => { if (!res.writableEnded && !res.destroyed) send(res, 200, x); }).catch((e) => { console.error('Fehler', p, e); if (!res.writableEnded) send(res, 500, { error: 'Serverfehler' }); });
+      else send(res, 200, out);
     } catch (e) {
       if (e instanceof ApiError) return send(res, e.status, { error: e.message });
       console.error('Fehler', req.method, p, e);

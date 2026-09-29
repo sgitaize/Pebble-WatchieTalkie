@@ -1,1 +1,1 @@
-1.0 beta: First release of WatchieTalkie2 – dictation & quick replies, contacts, groups, end-to-end encryption, timeline notifications, all Pebble models.
+1.1: Radio beep on new messages (watches with speaker), faster and more battery-friendly delivery (long polling), statistics on the server info page, English/German UI.

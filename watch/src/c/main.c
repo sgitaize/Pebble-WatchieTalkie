@@ -7,7 +7,7 @@
 /* Befehle pkjs → Uhr */
 enum { C_LIST_ITEM = 2, C_MSG_ITEM = 5, C_NEW_MSG = 7, C_QR_ITEM = 8, C_STATUS = 9, C_SENT = 10 };
 /* Befehle Uhr → pkjs */
-enum { C_READY = 20, C_OPEN = 21, C_SEND = 22, C_CLOSE = 23, C_ACCEPT = 24, C_DECLINE = 25 };
+enum { C_READY = 20, C_OPEN = 21, C_SEND = 22, C_CLOSE = 23, C_ACCEPT = 24, C_DECLINE = 25, C_SEND_VOICE = 26 };
 /* Art eines Listeneintrags */
 enum { K_CHAT = 0, K_CONTACT_INVITE = 1, K_GROUP_INVITE = 2 };
 
@@ -57,6 +57,20 @@ static bool s_chat_loading;
 static char *s_qr[MAX_QR];
 static int s_qr_count;
 static bool s_vibe = true;
+static bool s_beep = true;
+
+/* Funk-Piep („Roger“) bei neuer Nachricht – nur Uhren mit Lautsprecher (Time 2, Pebble 2 Duo, Round 2).
+   Ältere Modelle laufen mit Firmware ohne Lautsprecher-Funktionen, dort wird nichts aufgerufen. */
+static void roger_beep(void) {
+#if defined(PBL_PLATFORM_EMERY) || defined(PBL_PLATFORM_FLINT) || defined(PBL_PLATFORM_GABBRO)
+  static const SpeakerNote notes[] = {
+    { .midi_note = 84, .waveform = SpeakerWaveformSquare, .duration_ms = 60, .velocity = 0 },
+    { .midi_note = 0, .waveform = SpeakerWaveformSquare, .duration_ms = 25, .velocity = 0 },
+    { .midi_note = 91, .waveform = SpeakerWaveformSquare, .duration_ms = 90, .velocity = 0 },
+  };
+  if (s_beep) speaker_play_notes(notes, ARRAY_LENGTH(notes), 35);
+#endif
+}
 
 static Window *s_main_win, *s_chat_win, *s_pick_win;
 static MenuLayer *s_menu, *s_pick_menu;
@@ -219,7 +233,7 @@ static void dict_done(DictationSession *session, DictationSessionStatus status, 
   if (status == DictationSessionStatusSuccess && text && text[0]) {
     msg_append("", text, true);
     chat_relayout(true);
-    send_cmd(C_SEND, s_open_chat, text);
+    send_cmd(C_SEND_VOICE, s_open_chat, text);
   } else if (status != DictationSessionStatusFailureTranscriptionRejected) {
     banner_show(TR(T_NO_VOICE));
     pick_open(0);
@@ -408,6 +422,7 @@ static void inbox(DictionaryIterator *it, void *ctx) {
       bool here = s_chat_win && strcmp(str(it, MESSAGE_KEY_CHAT), s_open_chat) == 0;
       if (here) { msg_append(str(it, MESSAGE_KEY_FROM), str(it, MESSAGE_KEY_TEXT), false); chat_relayout(true); }
       if (s_vibe) vibes_short_pulse();
+      roger_beep();
       if (!here && s_chat_win) {
         static char b[48];
         snprintf(b, sizeof(b), TR(T_NEW_FROM), str(it, MESSAGE_KEY_FROM));
@@ -418,6 +433,7 @@ static void inbox(DictionaryIterator *it, void *ctx) {
     case C_QR_ITEM:
       if (idx == 0) { for (int i = 0; i < s_qr_count; i++) free(s_qr[i]); s_qr_count = 0; }
       s_vibe = num(it, MESSAGE_KEY_FLAGS) & 1;
+      s_beep = (num(it, MESSAGE_KEY_FLAGS) & 2) != 0;
       if (count > 0 && idx == s_qr_count && idx < MAX_QR) {
         const char *t = str(it, MESSAGE_KEY_TEXT);
         s_qr[s_qr_count] = malloc(strlen(t) + 1);

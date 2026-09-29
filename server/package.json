@@ -1,6 +1,6 @@
 {
   "name": "psst-server",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Server für psst – Walkie-Talkie mit Textnachrichten für die Pebble",
   "main": "server.js",

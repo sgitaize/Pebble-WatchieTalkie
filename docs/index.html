@@ -3,35 +3,129 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>WatchieTalkie2 – Walkie-Talkie für die Pebble</title>
+<title>WatchieTalkie2 – Server</title>
+<meta name="referrer" content="no-referrer">
 <link rel="icon" href="icon.svg">
 <style>
-  :root{--bg:#f6f3ef;--panel:#fff;--fg:#1b1b19;--muted:#6f6d66;--line:#e2ddd5;--accent:#c23a12}
-  @media (prefers-color-scheme: dark){:root{--bg:#121110;--panel:#1c1a19;--fg:#eeeae4;--muted:#9f9a92;--line:#302c29;--accent:#ff7a4d}}
+  :root{--bg:#f7f4f1;--panel:#fff;--fg:#1d1b1a;--muted:#6b6661;--line:#e7e1da;--accent:#E35462;--two:#FFD23F;--code:#f1ece6}
+  @media (prefers-color-scheme: dark){:root{--bg:#141212;--panel:#1e1b1b;--fg:#f0ebe6;--muted:#a39d97;--line:#34302e;--code:#282424}}
+  *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
-  main{max-width:640px;margin:0 auto;padding:28px 16px 48px}
-  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin:0 0 14px}
-  h1{margin:8px 0 4px;font-size:32px}a{color:var(--accent)}.muted{color:var(--muted);font-size:14px}
-  img{vertical-align:middle}
+  header{background:var(--accent);color:#fff;padding:34px 16px 30px}
+  .wrap{max-width:760px;margin:0 auto}
+  .brand{display:flex;align-items:center;gap:16px}
+  .brand h1{margin:0;font:400 38px/1.1 Georgia,"DejaVu Serif",serif;letter-spacing:.2px;white-space:nowrap}
+  @media (max-width:420px){.brand h1{font-size:29px}.brand{gap:10px}}
+  .brand h1 svg{height:.95em;width:auto;vertical-align:-.12em;margin-left:2px}
+  .tag{margin:10px 0 0;font-size:18px;opacity:.95}
+  .sub{margin:4px 0 0;font-size:14px;opacity:.85}
+  main{padding:22px 16px 40px}
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:-44px 0 18px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+  .kpi .v{font-size:30px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.15}
+  .kpi .l{color:var(--muted);font-size:14px}
+  @media (max-width:520px){.kpis{grid-template-columns:1fr}.kpi .v{font-size:26px}}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:0 0 14px}
+  h2{font-size:19px;margin:0 0 8px}h3{font-size:15px;margin:14px 0 4px}
+  ul{margin:6px 0;padding-left:20px}li{margin:4px 0}
+  a{color:var(--accent)}.muted{color:var(--muted);font-size:14px}
+  code,pre{background:var(--code);border-radius:6px;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace}
+  code{padding:1px 5px}pre{padding:10px 12px;overflow:auto;margin:6px 0}
+  .addr{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .addr code{font-size:15px;padding:6px 10px}
+  button{font:inherit;padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}
+  .spezi{display:inline-flex;align-items:center;gap:8px;background:#FFC20E;color:#2b1a0e;text-decoration:none;font-weight:650;
+    padding:9px 16px;border-radius:999px;border:0}
+  .spezi:hover{filter:brightness(1.05)}
+  .spezi svg{width:14px;height:28px}
+  footer{text-align:center;padding:10px 16px 30px}
+  .hidden{display:none}
 </style>
 </head>
 <body>
-<main>
-  <h1><img src="icon.svg" width="40" height="40" alt=""> WatchieTalkie2</h1>
-  <p>Walkie-Talkie mit Textnachrichten für die Pebble: Kontakt wählen, sprechen, fertig – Ende-zu-Ende-verschlüsselt. Weiterführung des früheren Watchie-Talkie.</p>
+<header>
+  <div class="wrap">
+    <div class="brand">
+      <svg width="54" height="54" viewBox="0 0 144 144" aria-hidden="true"><g transform="translate(-14,0)"><rect x="84" y="16" width="7" height="28" rx="3" fill="#fff"/><rect x="62" y="38" width="44" height="88" rx="9" fill="#fff"/><rect x="70" y="48" width="28" height="22" rx="3" fill="#E35462"/><g fill="#E35462"><circle cx="75" cy="84" r="4"/><circle cx="93" cy="84" r="4"/><circle cx="75" cy="98" r="4"/><circle cx="93" cy="98" r="4"/><circle cx="75" cy="112" r="4"/><circle cx="93" cy="112" r="4"/></g><g fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round"><path d="M48 60 L30 50"/><path d="M48 80 L24 80"/><path d="M48 100 L30 110"/></g></g></svg>
+      <h1>WatchieTalkie<svg viewBox="-4 -4 72 78" aria-label="2"><path d="M6,22 C4,8 18,0 31,0 C46,0 55,10 55,22 C55,38 36,48 12,68 C26,60 42,61 50,66 C56,70 62,67 64,60" fill="none" stroke="#FFD23F" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg></h1>
+    </div>
+    <p class="tag" data-en="Walkie-talkie for your Pebble – speak, send, end-to-end encrypted.">Walkie-Talkie für die Pebble – sprechen, senden, Ende-zu-Ende-verschlüsselt.</p>
+    <p class="sub" id="srv">&nbsp;</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="kpis" aria-live="polite">
+    <div class="kpi"><div class="v" id="kUsers">–</div><div class="l" data-en="registered users">registrierte Nutzer</div></div>
+    <div class="kpi"><div class="v" id="kMsgs">–</div><div class="l" data-en="messages sent">verschickte Nachrichten</div></div>
+    <div class="kpi"><div class="v" id="kVoice">–</div><div class="l" data-en="of them spoken (dictated)">davon gesprochen (diktiert)</div></div>
+  </div>
+  <p class="muted" id="kSince">&nbsp;</p>
+
   <section>
-    <h2>Öffentlicher Server: watchietalkie.aize-it.de</h2>
-    <p id="info" class="muted">Lade Server-Infos …</p>
-    <p>Die App gibt es im <a href="https://apps.repebble.com/5baaf5505dcf4454bdab0478">Pebble-App-Store unter „WatchieTalkie2“</a>. Konto, Kontakte, Gruppen und Schnellantworten stellst du in der Pebble-App unter <b>Einstellungen</b> ein.</p>
-    <p>Eigenen Server betreiben? Alles ist Open Source: <a href="https://github.com/sgitaize/Pebble-WatchieTalkie">github.com/sgitaize/Pebble-WatchieTalkie</a></p>
+    <h2 data-en="What this server does">Was dieser Server macht</h2>
+    <ul>
+      <li data-en="It relays messages between Pebble watches: pick a friend on the watch, speak – the text arrives on their watch.">Er vermittelt Nachrichten zwischen Pebble-Uhren: Kontakt auf der Uhr wählen, sprechen – der Text kommt auf der Uhr des anderen an.</li>
+      <li data-en="Messages are encrypted on the phone (NaCl). The server only stores ciphertext and can neither read nor forge them.">Nachrichten werden auf dem Handy verschlüsselt (NaCl). Der Server speichert nur Chiffretext und kann sie weder lesen noch fälschen.</li>
+      <li data-en="It keeps usernames, contacts, groups and at most the last 50 messages per chat for 30 days – nothing else. No e-mail, no phone number, no tracking.">Er kennt Benutzernamen, Kontakte, Gruppen und höchstens die letzten 50 Nachrichten je Chat für 30 Tage – sonst nichts. Keine E-Mail, keine Telefonnummer, kein Tracking.</li>
+      <li data-en="Battery-friendly: while the app is open, the phone asks once and the server answers as soon as something new arrives (long polling). When the app is closed, a timeline notification tells you who wrote.">Akkuschonend: Bei offener App fragt das Handy einmal und der Server antwortet, sobald etwas Neues da ist (Long-Polling). Ist die App zu, meldet eine Timeline-Benachrichtigung, wer geschrieben hat.</li>
+    </ul>
   </section>
-  <p class="muted"><a href="https://watchietalkie.aize-it.de/impressum.html">Impressum &amp; Datenschutz</a></p>
+
+  <section>
+    <h2 data-en="Connect">Verbinden</h2>
+    <p data-en="Install WatchieTalkie2 from the Pebble app store, open its settings in the Pebble app and use this server address:">WatchieTalkie2 aus dem Pebble-App-Store installieren, in der Pebble-App die Einstellungen öffnen und diese Server-Adresse verwenden:</p>
+    <div class="addr"><code id="addr"></code><button id="copy" data-en="Copy">Kopieren</button></div>
+    <p class="muted"><a href="https://apps.repebble.com/5baaf5505dcf4454bdab0478" data-en="WatchieTalkie2 in the Pebble app store">WatchieTalkie2 im Pebble-App-Store</a></p>
+  </section>
+
+  <section>
+    <h2 data-en="Host your own server">Eigenen Server betreiben</h2>
+    <p data-en="Everything is open source (MIT). The server is a single Node.js file without dependencies or database – run it for your friends:">Alles ist Open Source (MIT). Der Server ist eine einzige Node.js-Datei ohne Abhängigkeiten und ohne Datenbank – betreib ihn für deine Freunde:</p>
+    <h3>Node.js ≥ 18</h3>
+    <pre>git clone https://github.com/sgitaize/Pebble-WatchieTalkie
+cd Pebble-WatchieTalkie/server
+PORT=3000 node server.js</pre>
+    <h3>Docker</h3>
+    <pre>cd Pebble-WatchieTalkie/server
+docker compose up -d        # Port 3000, Daten im Volume "data"</pre>
+    <h3 data-en="Web hosting (Plesk)">Webhosting (Plesk)</h3>
+    <p class="muted" data-en="Upload the server folder, enable Node.js with application root = folder, startup file server.js. Put HTTPS in front (Let's Encrypt, Caddy, nginx). Set REGISTER_CODE to keep the server private.">Server-Ordner hochladen, Node.js aktivieren mit Anwendungsstamm = Ordner, Startdatei server.js. HTTPS davor (Let's Encrypt, Caddy, nginx). Mit REGISTER_CODE bleibt der Server privat.</p>
+    <p class="muted"><a href="https://github.com/sgitaize/Pebble-WatchieTalkie#eigenen-server-betreiben" data-en="Full guide on GitHub">Ausführliche Anleitung auf GitHub</a></p>
+  </section>
+
+  <section id="donateBox" class="hidden">
+    <h2 data-en="Support">Unterstützen</h2>
+    <p data-en="WatchieTalkie2 is a free hobby project without ads. If you like it, you can chip in for hosting:">WatchieTalkie2 ist ein freies Hobbyprojekt ohne Werbung. Wenn es dir gefällt, kannst du etwas zum Hosting beitragen:</p>
+    <a class="spezi" id="donate" href="#" rel="noopener">
+      <svg viewBox="0 0 14 28" aria-hidden="true"><path d="M5 0h4v5c0 1 3 3 3 6v15a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V11c0-3 3-5 3-6z" fill="#5a2d0c"/><rect x="2" y="13" width="10" height="7" fill="#f28c1b"/><rect x="5" y="0" width="4" height="2" fill="#c9c9c9"/></svg>
+      Buy me a Spezi
+    </a>
+  </section>
+
+  <p class="muted" data-en="A continuation of the former Watchie-Talkie (offline). Use at your own risk; no guarantee of availability or delivery.">Weiterführung des früheren Watchie-Talkie (offline). Nutzung auf eigene Gefahr, ohne Gewähr für Verfügbarkeit oder Zustellung.</p>
 </main>
+<footer class="muted">
+  <a href="https://watchietalkie.aize-it.de/impressum.html" data-en="Imprint, privacy &amp; liability">Impressum, Datenschutz &amp; Haftung</a> ·
+  <a href="https://github.com/sgitaize/Pebble-WatchieTalkie">GitHub</a>
+</footer>
 <script>
-fetch("https://watchietalkie.aize-it.de/v1/info").then(r => r.json()).then(i => {
-  document.getElementById('info').textContent = i.name + ' · Version ' + i.version + ' · Registrierung ' +
-    (i.registration === 'open' ? 'offen' : 'nur mit Code') + ' · bis ' + i.historyMax + ' Nachrichten je Chat, ' + i.historyDays + ' Tage';
-}).catch(() => { document.getElementById('info').textContent = 'Server nicht erreichbar.'; });
+'use strict';
+const DE = /^de/i.test(navigator.language || '');
+if (!DE) { document.documentElement.lang = 'en'; document.querySelectorAll('[data-en]').forEach((el) => { el.innerHTML = el.dataset.en; }); }
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => Number(n || 0).toLocaleString(DE ? 'de-DE' : 'en-US');
+$('addr').textContent = 'https://watchietalkie.aize-it.de';
+$('copy').onclick = () => { navigator.clipboard && navigator.clipboard.writeText('https://watchietalkie.aize-it.de'); $('copy').textContent = DE ? 'Kopiert ✓' : 'Copied ✓'; };
+fetch('https://watchietalkie.aize-it.de/v1/info').then((r) => r.json()).then((i) => {
+  $('srv').textContent = (DE ? 'Server „' : 'Server "') + i.name + (DE ? '“ · Version ' : '" · version ') + i.version + ' · ' +
+    (i.registration === 'open' ? (DE ? 'Registrierung offen' : 'open registration') : (DE ? 'Registrierung nur mit Code' : 'registration by code only'));
+  if (i.donate) { $('donate').href = i.donate; $('donateBox').classList.remove('hidden'); }
+}).catch(() => { $('srv').textContent = DE ? 'Server nicht erreichbar.' : 'Server unreachable.'; });
+fetch('https://watchietalkie.aize-it.de/v1/stats').then((r) => r.json()).then((s) => {
+  $('kUsers').textContent = fmt(s.users); $('kMsgs').textContent = fmt(s.messages); $('kVoice').textContent = fmt(s.voice);
+  $('kSince').textContent = (DE ? 'Gezählt seit ' : 'Counted since ') + new Date(s.since).toLocaleDateString(DE ? 'de-DE' : 'en-US');
+}).catch(() => {});
 </script>
 </body>
 </html>

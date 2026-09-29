@@ -1,0 +1,16 @@
+# Start: docker compose up -d   → http://localhost:3000 (HTTPS per Reverse-Proxy davor, z. B. Caddy)
+services:
+  watchietalkie:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - data:/app/data
+    environment:
+      # REGISTER_CODE: "geheim"     # nur mit Code registrieren (privater Server)
+      # SERVER_NAME: "Mein Server"
+      # DONATE_URL: "off"           # Spendenbutton ausblenden
+      TIMELINE_API: "https://timeline-api.rebble.io"
+volumes:
+  data:

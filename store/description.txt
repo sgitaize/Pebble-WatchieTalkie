@@ -9,6 +9,8 @@ WatchieTalkie2 continues the original Watchie-Talkie app, which has been offline
 • History: last 50 messages per chat, kept for 30 days
 • End-to-end encryption (NaCl): the server operator cannot read your messages
 • Notifications even when the app is closed (timeline)
+• Radio beep on new messages on watches with speaker (Time 2, Pebble 2 Duo, Round 2)
+• Battery-friendly: long polling only while the app is open, no background activity
 • Every Pebble: Pebble/Steel, Time, Time Steel, Time Round, Pebble 2, Time 2, Pebble 2 Duo, Round 2
 • Open source (MIT) – host your own server with Node.js, no database needed
 
@@ -17,3 +19,5 @@ Getting started: open the app settings in the Pebble app, choose a username and 
 Beta: use at your own risk, no guarantee of availability or delivery. Not for emergencies.
 
 Source code & self-hosting: https://github.com/sgitaize/Pebble-WatchieTalkie
+
+Like it? Buy me a Spezi 🥤 to support the server and hosting: https://www.paypal.com/donate/?hosted_button_id=LGAZB9PR4YV5L

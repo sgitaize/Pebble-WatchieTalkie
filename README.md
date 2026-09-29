@@ -1,5 +1,7 @@
 # WatchieTalkie2 – Walkie-Talkie für die Pebble
 
+<a href="https://www.paypal.com/donate/?hosted_button_id=LGAZB9PR4YV5L"><img src="store/buy-me-a-spezi.svg" alt="Buy me a Spezi" height="40"></a>
+
 Kontakt auf der Uhr wählen, SELECT drücken, sprechen – die Nachricht kommt als Text beim anderen an. **Ende-zu-Ende-verschlüsselt**, komplett Open Source und mit eigenem Server betreibbar.
 
 WatchieTalkie2 ist eine **Weiterführung des früheren [Watchie-Talkie](https://apps.repebble.com/55de02ca4374cb08ff000055)**, das seit Jahren offline ist. Die Motivation: Jeder soll einen Just-for-fun-Chat mit Freunden direkt am Handgelenk führen können – und bei Bedarf den Server selbst hosten. Neu geschrieben, keine Verbindung zum ursprünglichen Anbieter.
@@ -12,7 +14,9 @@ WatchieTalkie2 ist eine **Weiterführung des früheren [Watchie-Talkie](https://
 - **Ende-zu-Ende-Verschlüsselung:** der Server-Betreiber kann Nachrichten nicht lesen
 - **Benachrichtigung bei geschlossener App** über Timeline-Pins – ohne zusätzliche Handy-App (wenn aus dem Pebble-App-Store installiert)
 - **Alle Pebble-Modelle:** Pebble / Steel (aplite), Time / Time Steel (basalt), Time Round (chalk), Pebble 2 (diorite), Time 2 (emery), Pebble 2 Duo (flint), Round 2 (gabbro)
-- **Leichter Server:** Node.js ohne Abhängigkeiten, eine Datei, JSON-Speicher
+- **Funk-Piep** bei neuen Nachrichten über den Lautsprecher (Time 2, Pebble 2 Duo, Round 2; abschaltbar)
+- **Akkuschonend:** Long-Polling nur bei offener App (eine Anfrage wartet bis zu 25 s und kommt sofort bei Neuem zurück), sonst Timeline
+- **Leichter Server:** Node.js ohne Abhängigkeiten, eine Datei, JSON-Speicher; Info-Seite mit Statistik (Nutzer, Nachrichten, davon diktiert); auch per Docker
 
 ## Aufbau
 
@@ -65,7 +69,14 @@ node test.js                   # API-Test mit eigenem Testserver
 node test.js https://mein-server.de   # gegen einen laufenden Server (legt Testkonten an und löscht sie)
 ```
 
-HTTPS ist Pflicht (Reverse-Proxy wie Caddy/nginx oder Hosting mit Let's Encrypt).
+HTTPS ist Pflicht (Reverse-Proxy wie Caddy/nginx oder Hosting mit Let's Encrypt). Unter der Server-Adresse zeigt eine Info-Seite, was der Server macht, mit Statistik (registrierte Nutzer, verschickte Nachrichten, davon diktiert).
+
+**Docker:**
+
+```bash
+cd server
+docker compose up -d           # Port 3000, Daten im Volume "data"; Einstellungen per environment in docker-compose.yml
+```
 
 **Plesk (z. B. netcup Webhosting):** Inhalt von `server/` nach `httpdocs/` hochladen, dann *Node.js* aktivieren mit Anwendungsstamm `/httpdocs`, Dokumentenstamm `/httpdocs/public` (bleibt leer – alle Seiten liefert Node mit Sicherheits-Headern aus `pages/`), Startdatei `server.js`, Modus `production`. *Run script → setup* prüft Schreibrechte und startet neu. Fehler landen in `logs/app.log`.
 
@@ -78,6 +89,7 @@ HTTPS ist Pflicht (Reverse-Proxy wie Caddy/nginx oder Hosting mit Let's Encrypt)
 | `HISTORY_DAYS` | 30 | Nachrichten älter als … Tage werden gelöscht |
 | `TIMELINE_API` | `https://timeline-api.rebble.io` | Timeline-Dienst für Benachrichtigungen, `off` = aus |
 | `SERVER_NAME` | WatchieTalkie2 | Anzeigename |
+| `DONATE_URL` | Projekt-Spendenlink | Spendenbutton auf der Info-Seite, `off` = ausblenden |
 
 Daten liegen in `server/data/db.json` (nur Chiffretext) – zum Sichern die Datei kopieren. **Wer einen öffentlichen Server betreibt, muss `public/impressum.html` durch eigene Angaben ersetzen.**
 
@@ -88,6 +100,7 @@ JSON, Anmeldung mit `Authorization: Bearer <Geräte-Token>`. Chat-IDs: `u.<name>
 | Methode | Pfad | Zweck |
 |---|---|---|
 | GET | `/v1/info` | Server-Infos |
+| GET | `/v1/stats` | öffentliche Zähler: Nutzer, Gruppen, Nachrichten, davon diktiert |
 | POST | `/v1/register` | `{name, code?}` → `{name, token}` |
 | GET / PUT / DELETE | `/v1/me` | Profil, Einstellungen (`cfg`), `pubKey`, `timelineToken`, Konto löschen |
 | GET | `/v1/keys` | öffentliche Schlüssel von Kontakten und Gruppenmitgliedern |
@@ -99,9 +112,9 @@ JSON, Anmeldung mit `Authorization: Bearer <Geräte-Token>`. Chat-IDs: `u.<name>
 | POST | `/v1/groups/:id/invite` · `/accept` | einladen / annehmen |
 | PUT · DELETE | `/v1/groups/:id` | umbenennen / verlassen |
 | GET | `/v1/chats` | Chatliste mit Ungelesen-Zähler |
-| GET · POST | `/v1/chats/:id/messages` | Historie (`?limit=`) / senden `{e}` |
+| GET · POST | `/v1/chats/:id/messages` | Historie (`?limit=`) / senden `{e, voice?}` (`voice` zählt nur für die Statistik) |
 | POST | `/v1/chats/:id/read` | `{upTo}` gelesen markieren |
-| GET | `/v1/poll?since=` | alles Neue seit Nachrichten-Nummer |
+| GET | `/v1/poll?since=&wait=&invites=` | alles Neue seit Nachrichten-Nummer; mit `wait` (≤ 25 s) Long-Polling |
 
 ## Entwicklung
 
@@ -116,6 +129,16 @@ Im Emulator gibt es kein Diktat – dort Schnellantworten nutzen. Die Einstellun
 ## Haftungsausschluss
 
 WatchieTalkie2 ist ein freies Hobbyprojekt und wird **ohne jede Gewähr** bereitgestellt – keine Zusage für Verfügbarkeit, Zustellung oder Speicherung, nicht für Notfälle oder wichtige Mitteilungen gedacht. Für Nachrichteninhalte sind die Absender verantwortlich. Wer die Software selbst betreibt, ist für seinen Server, seine Nutzer und die Einhaltung der Gesetze selbst verantwortlich. Details: Impressum des jeweiligen Servers (öffentlicher Server: [watchietalkie.aize-it.de/impressum.html](https://watchietalkie.aize-it.de/impressum.html)).
+
+## Unterstützen
+
+WatchieTalkie2 ist ein freies Hobbyprojekt ohne Werbung. Wer den öffentlichen Server und die Entwicklung unterstützen möchte:
+
+<a href="https://www.paypal.com/donate/?hosted_button_id=LGAZB9PR4YV5L"><img src="store/buy-me-a-spezi.svg" alt="Buy me a Spezi" height="40"></a>
+
+## Sprachnachrichten?
+
+Die Pebble-SDK erlaubt Apps derzeit keine Audio-Aufnahme vom Mikrofon – nur das fertige Diktat als Text. Echte Sprachnachrichten sind deshalb nicht möglich; gesprochene Nachrichten kommen als Text an (und werden in der Statistik als „diktiert“ gezählt). Abspielen über den Lautsprecher ginge – sobald eine Aufnahme-Schnittstelle kommt, lässt sich das nachrüsten.
 
 ## Lizenz
 
