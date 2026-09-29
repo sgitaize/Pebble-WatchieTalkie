@@ -48,7 +48,7 @@ Uhr (C) ⇄ AppMessage ⇄ PebbleKit JS (Handy, ver-/entschlüsselt) ⇄ HTTPS/J
 
 1. WatchieTalkie2 aus dem Pebble-App-Store installieren: [apps.repebble.com/5baaf5505dcf4454bdab0478](https://apps.repebble.com/5baaf5505dcf4454bdab0478)
 2. In der Pebble-App bei WatchieTalkie2 auf **Einstellungen**: Benutzernamen wählen, Freunde per Benutzername einladen, Gruppen anlegen, Schnellantworten festlegen, **Speichern**.
-3. Auf der Uhr: Chat wählen → **SELECT** = sprechen, **SELECT lang** = Schnellantwort, **hoch/runter** = scrollen. Einladungen erscheinen oben in der Liste und lassen sich direkt auf der Uhr annehmen.
+3. Auf der Uhr: Chat wählen → **SELECT** = sprechen, **SELECT lang** = Schnellantwort, Emoji (wie im Original) oder eigene letzte Nachricht löschen, **hoch/runter** = scrollen. Einladungen erscheinen oben in der Liste und lassen sich direkt auf der Uhr annehmen.
 4. Neues Handy: in den Einstellungen den **Übertragungscode** anzeigen und auf dem neuen Handy unter „Ich habe schon ein Konto“ eingeben (enthält Zugang und geheimen Schlüssel – nie weitergeben).
 
 ## Sicherheit
@@ -125,10 +125,12 @@ JSON, Anmeldung mit `Authorization: Bearer <Geräte-Token>`. Chat-IDs: `u.<name>
 | POST | `/v1/groups` | `{title, members[]}` Gruppe anlegen |
 | POST | `/v1/groups/:id/invite` · `/accept` | einladen / annehmen |
 | PUT · DELETE | `/v1/groups/:id` | umbenennen / verlassen |
+| DELETE | `/v1/groups/:id/members/:name` | nur Besitzer: Mitglied entfernen / Einladung zurückziehen |
 | GET | `/v1/chats` | Chatliste mit Ungelesen-Zähler |
 | GET · POST | `/v1/chats/:id/messages` | Historie (`?limit=`) / senden `{e, voice?}` (`voice` zählt nur für die Statistik) |
+| DELETE | `/v1/chats/:id/messages/:msgId` | eigene Nachricht löschen (für alle) |
 | POST | `/v1/chats/:id/read` | `{upTo}` gelesen markieren |
-| GET | `/v1/poll?since=&wait=&invites=` | alles Neue seit Nachrichten-Nummer; mit `wait` (≤ 25 s) Long-Polling |
+| GET | `/v1/poll?since=&wait=&invites=` | alles Neue seit Nachrichten-Nummer (`del` = Chats mit gelöschten Nachrichten); mit `wait` (≤ 25 s) Long-Polling |
 | POST | `/v1/me/telegram` | `{bot}` Telegram-Bot verbinden (Chat-ID per getUpdates), `{bot: ''}` trennt |
 | POST | `/v1/test` | `{delay?}` (0–60 s) Testnachricht des Servers im nur lesbaren Chat `u.watchietalkie` (fester Klartext `t`, mit Handy-/Timeline-Benachrichtigung) – 5 je 10 min |
 

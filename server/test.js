@@ -141,6 +141,30 @@ async function main() {
   r = await api('GET', '/v1/me', null, ta);
   ok(r.body.groups[0].title === 'Crew', 'Gruppe umbenannt');
 
+  // Eigene Nachricht löschen: nur Absender, Polling meldet den Chat in "del"
+  const mid = (await api('POST', '/v1/chats/g.' + gid + '/messages', { e: enc([A, B]) }, tb)).body.msg.id;
+  ok((await api('DELETE', '/v1/chats/g.' + gid + '/messages/' + mid, null, ta)).status === 403, 'fremde Nachricht nicht löschbar');
+  const seqD = (await api('GET', '/v1/chats', null, ta)).body.seq;
+  ok((await api('DELETE', '/v1/chats/g.' + gid + '/messages/' + mid, null, tb)).status === 200, 'eigene Nachricht gelöscht');
+  r = await api('GET', '/v1/poll?since=' + seqD, null, ta);
+  ok(r.body.del.includes('g.' + gid) && !r.body.msgs.length, 'Löschung per Polling gemeldet');
+  r = await api('GET', '/v1/chats/g.' + gid + '/messages', null, ta);
+  ok(!r.body.msgs.some((x) => x.id === mid), 'Nachricht für alle weg');
+  ok((await api('DELETE', '/v1/chats/g.' + gid + '/messages/' + mid, null, tb)).status === 404, 'doppelt löschen → 404');
+
+  // Besitzer entfernt Mitglieder bzw. zieht Einladungen zurück
+  ok((await api('DELETE', '/v1/groups/' + gid + '/members/' + A, null, tb)).status === 403, 'nur Besitzer darf entfernen');
+  r = await api('DELETE', '/v1/groups/' + gid + '/members/' + B, null, ta);
+  ok(r.status === 200 && !r.body.groups[0].members.includes(B), 'Mitglied entfernt');
+  ok((await api('GET', '/v1/me', null, tb)).body.groups.length === 0, 'Entfernter sieht die Gruppe nicht mehr');
+  ok((await api('POST', '/v1/chats/g.' + gid + '/messages', { e: enc([A, B]) }, tb)).status === 404, 'Entfernter kann nicht mehr schreiben');
+  await api('POST', '/v1/groups/' + gid + '/invite', { name: B }, ta);
+  r = await api('DELETE', '/v1/groups/' + gid + '/members/' + B, null, ta);
+  ok(!r.body.groups[0].invited.includes(B) && !(await api('GET', '/v1/me', null, tb)).body.groupInvites.length, 'Einladung zurückgezogen');
+  ok((await api('DELETE', '/v1/groups/' + gid + '/members/' + A, null, ta)).status === 404, 'Besitzer kann sich nicht selbst entfernen');
+  await api('POST', '/v1/groups/' + gid + '/invite', { name: B }, ta);
+  ok((await api('POST', '/v1/groups/' + gid + '/accept', null, tb)).body.groups.length === 1, 'wieder eingeladen und beigetreten');
+
   // Blockieren: C lädt A ein, A blockiert C → C kann nicht erneut sichtbar einladen
   await api('POST', '/v1/contacts', { name: A }, tc);
   r = await api('POST', '/v1/blocks', { name: C }, ta);

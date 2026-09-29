@@ -7,9 +7,12 @@
 /* Befehle pkjs → Uhr */
 enum { C_LIST_ITEM = 2, C_MSG_ITEM = 5, C_NEW_MSG = 7, C_QR_ITEM = 8, C_STATUS = 9, C_SENT = 10 };
 /* Befehle Uhr → pkjs */
-enum { C_READY = 20, C_OPEN = 21, C_SEND = 22, C_CLOSE = 23, C_ACCEPT = 24, C_DECLINE = 25, C_SEND_VOICE = 26, C_TEST = 27, C_BEEP = 28 };
+enum { C_READY = 20, C_OPEN = 21, C_SEND = 22, C_CLOSE = 23, C_ACCEPT = 24, C_DECLINE = 25, C_SEND_VOICE = 26, C_TEST = 27, C_BEEP = 28, C_DELETE = 29 };
 /* Art eines Listeneintrags */
 enum { K_CHAT = 0, K_CONTACT_INVITE = 1, K_GROUP_INVITE = 2 };
+/* Auswahlmenü – mode 0: Schnellantworten + „Emoji …“ + „Letzte Nachricht löschen“ · 1: Einladung annehmen/ablehnen
+   2: Emoji wählen · 3: Löschen bestätigen */
+enum { P_REPLY = 0, P_INVITE = 1, P_EMOJI = 2, P_DELETE = 3 };
 
 #if defined(PBL_PLATFORM_APLITE)
 #define MAX_MSGS 10
@@ -39,9 +42,11 @@ typedef struct { char *text; char from[17]; bool mine; int16_t h; } Msg;
 static Chat s_chats[MAX_CHATS];
 static int s_chat_count;
 /* Texte (nur Englisch) */
-enum { T_LOADING, T_EMPTY_CHAT, T_NO_QR, T_ACCEPT, T_DECLINE, T_CONTACT_REQ, T_GROUP_INV, T_NO_VOICE, T_NEW_FROM, T_SEND_FAILED };
-static const char *T_EN[] = { "Loading …", "No messages yet.\nSELECT: speak\nhold SELECT: quick reply", "No quick replies",
-  "Accept", "Decline", "Contact request", "Group invitation", "Voice not available", "New from %s", "Sending failed" };
+enum { T_LOADING, T_EMPTY_CHAT, T_EMOJI, T_ACCEPT, T_DECLINE, T_CONTACT_REQ, T_GROUP_INV, T_NO_VOICE, T_NEW_FROM, T_SEND_FAILED,
+  T_DELETE_LAST, T_DELETE_YES, T_CANCEL };
+static const char *T_EN[] = { "Loading …", "No messages yet.\nSELECT: speak\nhold SELECT: quick reply, emoji", "Emoji …",
+  "Accept", "Decline", "Contact request", "Group invitation", "Voice not available", "New from %s", "Sending failed",
+  "Delete my last message", "Yes, delete it", "Cancel" };
 #define TR(i) (T_EN[i])
 static char s_status[160] = "…";
 
@@ -227,7 +232,7 @@ static void start_talk(void) {
 #if defined(PBL_MICROPHONE)
   if (s_dict && dictation_session_start(s_dict) == DictationSessionStatusSuccess) return;
 #endif
-  pick_open(0);
+  pick_open(P_REPLY);
 }
 #if defined(PBL_MICROPHONE)
 static void dict_done(DictationSession *session, DictationSessionStatus status, char *text, void *ctx) {
@@ -237,12 +242,12 @@ static void dict_done(DictationSession *session, DictationSessionStatus status, 
     send_cmd(C_SEND_VOICE, s_open_chat, text);
   } else if (status != DictationSessionStatusFailureTranscriptionRejected) {
     banner_show(TR(T_NO_VOICE));
-    pick_open(0);
+    pick_open(P_REPLY);
   }
 }
 #endif
 static void chat_select(ClickRecognizerRef r, void *ctx) { start_talk(); }
-static void chat_long_select(ClickRecognizerRef r, void *ctx) { pick_open(0); }
+static void chat_long_select(ClickRecognizerRef r, void *ctx) { pick_open(P_REPLY); }
 static void chat_click_config(void *ctx) {
   window_single_click_subscribe(BUTTON_ID_SELECT, chat_select);
   window_long_click_subscribe(BUTTON_ID_SELECT, 500, chat_long_select, NULL);
@@ -294,26 +299,53 @@ static void chat_open(Chat *c) {
 }
 
 /* ---------------------------------------------------- Auswahlmenü -- */
-/* mode 0: Schnellantwort senden · mode 1: Einladung annehmen/ablehnen */
+/* Emojis wie im Original-Watchie-Talkie: gesendet wird das echte Emoji (UTF-8), die Uhr-Schrift zeigt den Text-Smiley */
+static const char *EMOJI[][3] = {
+  { "\xF0\x9F\x91\x8D", "(y)", "Thumbs up" }, { "\xF0\x9F\x98\x8A", ":)", "Smile" }, { "\xF0\x9F\x98\x82", "xD", "Laughing" },
+  { "\xE2\x9D\xA4\xEF\xB8\x8F", "<3", "Heart" }, { "\xF0\x9F\x98\x89", ";)", "Wink" }, { "\xF0\x9F\x98\x80", ":D", "Grin" },
+  { "\xF0\x9F\x98\x98", ":*", "Kiss" }, { "\xF0\x9F\x98\xAE", ":O", "Surprised" }, { "\xF0\x9F\x98\xA2", ":'(", "Crying" },
+  { "\xF0\x9F\x98\x9E", ":(", "Sad" }, { "\xF0\x9F\x98\xA1", ">:(", "Angry" }, { "\xF0\x9F\xA4\x94", "(?)", "Thinking" },
+  { "\xF0\x9F\x91\x8B", "o/", "Wave" }, { "\xF0\x9F\x8E\x89", "\\o/", "Party" }, { "\xF0\x9F\x99\x8F", "(thanks)", "Thanks" },
+  { "\xF0\x9F\x91\x8C", "(ok)", "OK" }, { "\xF0\x9F\x91\x8E", "(n)", "Thumbs down" },
+};
 static int s_pick_mode;
 static Chat s_pick_chat;
 static uint16_t pick_rows(MenuLayer *m, uint16_t s, void *ctx) {
-  if (s_pick_mode == 1) return 2;
-  return s_qr_count ? s_qr_count : 1;
+  if (s_pick_mode == P_INVITE || s_pick_mode == P_DELETE) return 2;
+  if (s_pick_mode == P_EMOJI) return ARRAY_LENGTH(EMOJI);
+  return s_qr_count + (strcmp(s_open_chat, "u.watchietalkie") ? 2 : 0);   /* System-Chat: nur lesbar */
 }
 static void pick_draw(GContext *ctx, const Layer *cell, MenuIndex *idx, void *data) {
-  const char *t = s_pick_mode == 1 ? TR(idx->row == 0 ? T_ACCEPT : T_DECLINE) : (s_qr_count ? s_qr[idx->row] : TR(T_NO_QR));
+  int r = idx->row;
+  if (s_pick_mode == P_EMOJI) { menu_cell_basic_draw(ctx, cell, EMOJI[r][1], EMOJI[r][2], NULL); return; }
+  const char *t = s_pick_mode == P_INVITE ? TR(r == 0 ? T_ACCEPT : T_DECLINE)
+                : s_pick_mode == P_DELETE ? TR(r == 0 ? T_DELETE_YES : T_CANCEL)
+                : r < s_qr_count ? s_qr[r] : TR(r == s_qr_count ? T_EMOJI : T_DELETE_LAST);
   menu_cell_basic_draw(ctx, cell, t, NULL, NULL);
 }
+static void pick_mode(int mode) {
+  s_pick_mode = mode;
+  menu_layer_reload_data(s_pick_menu);
+  menu_layer_set_selected_index(s_pick_menu, MenuIndex(0, 0), MenuRowAlignCenter, false);
+}
+static void pick_send(const char *shown, const char *text) {
+  if (!s_open_chat[0]) return;
+  msg_append("", shown, true);
+  chat_relayout(true);
+  send_cmd(C_SEND, s_open_chat, text);
+}
 static void pick_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
-  if (s_pick_mode == 1) {
-    send_cmd(idx->row == 0 ? C_ACCEPT : C_DECLINE, s_pick_chat.id, NULL);
+  int r = idx->row;
+  if (s_pick_mode == P_INVITE) {
+    send_cmd(r == 0 ? C_ACCEPT : C_DECLINE, s_pick_chat.id, NULL);
     snprintf(s_status, sizeof(s_status), "%s", TR(T_LOADING));
-  } else if (s_qr_count && s_open_chat[0]) {
-    msg_append("", s_qr[idx->row], true);
-    chat_relayout(true);
-    send_cmd(C_SEND, s_open_chat, s_qr[idx->row]);
-  }
+  } else if (s_pick_mode == P_EMOJI) {
+    pick_send(EMOJI[r][1], EMOJI[r][0]);
+  } else if (s_pick_mode == P_DELETE) {
+    if (r == 0 && s_open_chat[0]) send_cmd(C_DELETE, s_open_chat, NULL);
+  } else if (r < s_qr_count) {
+    pick_send(s_qr[r], s_qr[r]);
+  } else { pick_mode(r == s_qr_count ? P_EMOJI : P_DELETE); return; }
   window_stack_remove(s_pick_win, true);
 }
 static void pick_load(Window *w) {
@@ -393,7 +425,7 @@ static void main_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
   if (!s_chat_count) { send_cmd(C_TEST, NULL, NULL); return; }   /* leere Liste: SELECT holt eine Testnachricht */
   Chat *c = &s_chats[idx->row];
   if (c->kind == K_CHAT) chat_open(c);
-  else { s_pick_chat = *c; pick_open(1); }
+  else { s_pick_chat = *c; pick_open(P_INVITE); }
 }
 #if defined(HAS_SPEAKER)
 static void main_long_select(MenuLayer *m, MenuIndex *idx, void *ctx) {

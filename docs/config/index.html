@@ -263,6 +263,12 @@ function render() {
         if (n) await act('POST', '/v1/groups/' + g.id + '/invite', { name: n.trim().toLowerCase() }, 'Invited')();
       }],
       ['Rename', async () => { const t = prompt('New name', g.title); if (t) await act('PUT', '/v1/groups/' + g.id, { title: t })(); }],
+      ...(g.owner === me.name ? [['Remove', async () => {
+        const others = g.members.concat(g.invited).filter((n) => n !== me.name);
+        if (!others.length) return flash('Nobody else is in the group.');
+        const n = prompt('Remove whom from the group? (' + others.join(', ') + ')', others[0]);
+        if (n) await act('DELETE', '/v1/groups/' + g.id + '/members/' + encodeURIComponent(n.trim().toLowerCase()), null, 'Removed')();
+      }]] : []),
       ['Leave', async () => { if (confirm(('Leave group "' + g.title + '"?'))) await act('DELETE', '/v1/groups/' + g.id)(); }, 'bad']]);
     return el;
   }, 'No groups yet.');

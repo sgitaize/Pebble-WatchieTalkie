@@ -8,7 +8,7 @@ E2E.init({ get: function (k) { return localStorage.getItem(k); }, set: function 
 var DEFAULT_SERVER = 'https://watchietalkie.aize-it.de';
 var CONFIG_URL = 'https://sgitaize.github.io/Pebble-WatchieTalkie/config/';
 var C = { LIST_ITEM: 2, MSG_ITEM: 5, NEW_MSG: 7, QR_ITEM: 8, STATUS: 9, SENT: 10,
-  READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25, SEND_VOICE: 26, TEST: 27, BEEP: 28 };
+  READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25, SEND_VOICE: 26, TEST: 27, BEEP: 28, DELETE: 29 };
 var SYS_CID = 'u.watchietalkie';     // System-Chat des Servers (Testnachrichten, nur lesbar)
 var K = { CHAT: 0, CONTACT_INVITE: 1, GROUP_INVITE: 2 };
 
@@ -45,7 +45,7 @@ function pump() {
 /* Die Uhr-Schriften kennen kaum Emojis → gängige in Text-Smileys umwandeln, übrige als (emoji) */
 var EMO = { '\uD83D\uDC4D': '(y)', '\uD83D\uDC4E': '(n)', '\uD83D\uDE00': ':D', '\uD83D\uDE03': ':D', '\uD83D\uDE04': ':D', '\uD83D\uDE01': ':D', '\uD83D\uDE02': 'xD', '\uD83E\uDD23': 'xD', '\uD83D\uDE0A': ':)', '\uD83D\uDE42': ':)',
   '\uD83D\uDE09': ';)', '\uD83D\uDE0D': '<3', '\u2764': '<3', '\uD83D\uDE18': ':*', '\uD83D\uDE22': ":'(", '\uD83D\uDE2D': ":'(", '\uD83D\uDE2E': ':O', '\uD83D\uDE1B': ':P', '\uD83D\uDE1C': ';P', '\uD83D\uDE41': ':(',
-  '\uD83D\uDE1E': ':(', '\uD83D\uDE21': '>:(', '\uD83E\uDD14': '(?)', '\uD83D\uDC4B': 'o/', '\uD83C\uDF89': '\\o/', '\uD83D\uDE4F': '(danke)', '\uD83D\uDC4C': '(ok)' };
+  '\uD83D\uDE1E': ':(', '\uD83D\uDE21': '>:(', '\uD83E\uDD14': '(?)', '\uD83D\uDC4B': 'o/', '\uD83C\uDF89': '\\o/', '\uD83D\uDE4F': '(thanks)', '\uD83D\uDC4C': '(ok)' };
 function plain(s) {
   s = String(s || '');
   for (var k in EMO) s = s.split(k).join(EMO[k]);
@@ -195,6 +195,23 @@ function sendMessage(cid, text, voice) {
   });
 }
 
+/* Eigene letzte Nachricht im Chat löschen (verschwindet für alle), danach Chat neu laden */
+function deleteLast(cid) {
+  var fail = function (msg) { toWatch({ CMD: C.SENT, FLAGS: 0, TEXT: trunc(msg, 60) }); };
+  if (!me) return fail('Not set up');
+  if (cid === SYS_CID) return fail('This chat is read-only');
+  api('GET', '/v1/chats/' + cid + '/messages', null, function (err, r) {
+    if (err) return fail(err.message);
+    var mine = (r.msgs || []).filter(function (msg) { return msg.f === me.name; }).pop();
+    if (!mine) return fail('No message of yours to delete');
+    api('DELETE', '/v1/chats/' + cid + '/messages/' + mine.id, null, function (err2) {
+      if (err2) return fail(err2.message);
+      status('Message deleted');
+      if (openChat === cid) loadMessages(cid);
+    });
+  });
+}
+
 /* Testnachricht vom Server anfordern – kommt wie eine echte Nachricht über das Polling */
 function requestTest() {
   if (!token || !me) return status('Not set up yet. Open the WatchieTalkie2 settings in the Pebble app.');
@@ -235,7 +252,9 @@ function poll() {
     }
     var invitesChanged = r.invites !== lastInvites;
     lastInvites = r.invites;
-    if (fresh.length || invitesChanged) loadChats();
+    var del = r.del || [];                               // Chats, in denen jemand eine Nachricht gelöscht hat
+    if (openChat && del.indexOf(openChat) >= 0) loadMessages(openChat);
+    if (fresh.length || invitesChanged || del.length) loadChats();
     schedulePoll(500);
   });
 }
@@ -275,6 +294,7 @@ Pebble.addEventListener('appmessage', function (e) {
   else if (cmd === C.DECLINE) answerInvite(cid, false);
   else if (cmd === C.TEST) requestTest();
   else if (cmd === C.BEEP) setBeep(p.TEXT === '1');
+  else if (cmd === C.DELETE) deleteLast(cid);
 });
 
 Pebble.addEventListener('showConfiguration', function () {
@@ -283,7 +303,7 @@ Pebble.addEventListener('showConfiguration', function () {
   for (var n in pins) fps[n] = E2E.fingerprint(pins[n]);
   var data = { server: server, token: token, platform: platform(), hasKey: E2E.ready(), sk: localStorage.getItem('wt.sk') || '',
     fp: E2E.ready() ? E2E.fingerprint(E2E.publicKey()) : '', fps: fps, changed: changedList() };
-  Pebble.openURL(CONFIG_URL + '#' + encodeURIComponent(JSON.stringify(data)));
+  Pebble.openURL(CONFIG_URL + '?v=' + Date.now() + '#' + encodeURIComponent(JSON.stringify(data)));
 });
 
 Pebble.addEventListener('webviewclosed', function (e) {

@@ -45,7 +45,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.5.0';
+const VERSION = '1.6.0';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -519,7 +519,7 @@ route('DELETE', /^\/v1\/blocks\/([a-z0-9_]{3,16})$/, true, (req, b, u, m) => {
   return meView(u);
 });
 
-/* Gruppen: Ersteller lädt Kontakte ein, Eingeladene nehmen an; jeder kann austreten */
+/* Gruppen: Ersteller lädt Kontakte ein, Eingeladene nehmen an; jeder kann austreten, der Besitzer kann Mitglieder entfernen */
 function needGroup(id) { const g = db.groups[id]; if (!g) fail(404, 'Gruppe nicht gefunden'); return g; }
 function leaveGroup(u, g) {
   if (!g) return;
@@ -583,6 +583,16 @@ route('PUT', /^\/v1\/groups\/(g[a-f0-9]{10})$/, true, (req, b, u, m) => {
   save();
   return meView(u);
 });
+route('DELETE', /^\/v1\/groups\/(g[a-f0-9]{10})\/members\/([a-z0-9_]{3,16})$/, true, (req, b, u, m) => {   // Mitglied entfernen / Einladung zurückziehen
+  const g = needGroup(m[1]);
+  if (g.owner !== u.name) fail(403, 'Nur der Besitzer der Gruppe darf das');
+  const r = db.users[m[2]];
+  if (!r || r.name === u.name || (!g.members.includes(r.name) && !g.invited.includes(r.name))) fail(404, 'Nutzer nicht gefunden');
+  leaveGroup(r, g);
+  wake(r.name);
+  save();
+  return meView(u);
+});
 route('DELETE', /^\/v1\/groups\/(g[a-f0-9]{10})$/, true, (req, b, u, m) => {   // austreten bzw. Einladung ablehnen
   leaveGroup(u, db.groups[m[1]]);
   save();
@@ -616,6 +626,19 @@ route('POST', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/messages$/, true, (req, b,
   if (limited('msg:' + u.name, 30, 60000) || limited('msgh:' + u.name, 600, 3600000)) fail(429, 'Zu viele Nachrichten, bitte kurz warten');
   return { msg: msgView(postMessage(u, a, e, b.voice === true), u.name) };
 });
+/* Eigene Nachricht löschen: verschwindet für alle; die Chat-Nummer "del" meldet es beim Polling */
+route('DELETE', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/messages\/(\d{1,12})$/, true, (req, b, u, m) => {
+  const a = chatAccess(u, m[1]);
+  const ch = a && db.chats[a.key];
+  const i = ch ? ch.msgs.findIndex((x) => x.id === Number(m[2])) : -1;
+  if (i < 0) fail(404, 'Nachricht nicht gefunden');
+  if (ch.msgs[i].f !== u.name) fail(403, 'Nur eigene Nachrichten können gelöscht werden');
+  ch.msgs.splice(i, 1);
+  ch.del = ++db.seq;
+  save();
+  for (const n of a.to) wake(n);
+  return { ok: true };
+});
 route('POST', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/read$/, true, (req, b, u, m) => {
   const a = chatAccess(u, m[1]);
   if (!a) fail(404, 'Chat nicht gefunden');
@@ -647,22 +670,23 @@ function wake(name) {
   for (const fn of set) fn();
 }
 function pollResult(u, since) {
-  const out = [];
+  const out = [], del = [];
   if (since < db.seq) {
     for (const cid of chatList(u).map((c) => c.id)) {
       const a = chatAccess(u, cid);
+      if (db.chats[a.key] && db.chats[a.key].del > since) del.push(cid);
       for (const msg of (db.chats[a.key] || { msgs: [] }).msgs) if (msg.id > since && msg.f !== u.name) out.push(Object.assign({ chat: cid }, msgView(msg, u.name)));
     }
   }
   out.sort((x, y) => x.id - y.id);
-  return { seq: db.seq, msgs: out.slice(-50), invites: meView(u).invitesIn.length + u.ginv.length };
+  return { seq: db.seq, msgs: out.slice(-50), del, invites: meView(u).invitesIn.length + u.ginv.length };
 }
 route('GET', /^\/v1\/poll$/, true, (req, b, u, m, q) => {
   const since = Number(q.get('since')) || 0;
   const wait = Math.max(0, Math.min(POLL_WAIT_MAX, Number(q.get('wait')) || 0));
   const invites = Number(q.get('invites'));
   const first = pollResult(u, since);
-  const changed = first.msgs.length || (q.has('invites') && invites !== first.invites);
+  const changed = first.msgs.length || first.del.length || (q.has('invites') && invites !== first.invites);
   const set = waiters.get(u.name);
   if (!wait || changed || waiterCount >= 2000 || (set && set.size >= 3)) return first;
   return new Promise((resolve) => {
@@ -670,7 +694,7 @@ route('GET', /^\/v1\/poll$/, true, (req, b, u, m, q) => {
     const finish = () => {
       if (done) return; done = true; waiterCount--; clearTimeout(timer);
       const s = waiters.get(u.name); if (s) { s.delete(finish); if (!s.size) waiters.delete(u.name); }
-      resolve(db.users[u.name] ? pollResult(u, since) : { seq: db.seq, msgs: [], invites: 0 });
+      resolve(db.users[u.name] ? pollResult(u, since) : { seq: db.seq, msgs: [], del: [], invites: 0 });
     };
     const timer = setTimeout(finish, wait * 1000);
     waiterCount++;
@@ -702,7 +726,8 @@ const EN_ERR = { 'Ungültiges ntfy-Thema (12–64 Zeichen A–Z, 0–9, _ -)': '
   'Ungültiges JSON': 'Invalid JSON', 'Zu viele Einladungen, bitte später': 'Too many invitations, please try later', 'Zu viele Gruppen': 'Too many groups',
   'Zu viele Kontakte': 'Too many contacts', 'Zu viele Zweitnamen': 'Too many aliases', 'Zu viele Nachrichten, bitte kurz warten': 'Too many messages, please wait a moment',
   'Zu viele Registrierungen, bitte später': 'Too many registrations, please try later', 'Zu viele neue Gruppen, bitte später': 'Too many new groups, please try later',
-  'Ungültige Adresse': 'Invalid address', 'Nicht gefunden': 'Not found', 'Zu viele Anfragen': 'Too many requests', 'Zu groß': 'Too large', 'Serverfehler': 'Server error' };
+  'Ungültige Adresse': 'Invalid address', 'Nicht gefunden': 'Not found', 'Zu viele Anfragen': 'Too many requests', 'Nur der Besitzer der Gruppe darf das': 'Only the group owner can do that',
+  'Nachricht nicht gefunden': 'Message not found', 'Nur eigene Nachrichten können gelöscht werden': 'You can only delete your own messages', 'Zu groß': 'Too large', 'Serverfehler': 'Server error' };
 function english(msg) {
   if (EN_ERR[msg]) return EN_ERR[msg];
   let m = /^Keine Einladung von (.*)$/.exec(msg); if (m) return 'No invitation from ' + m[1];
