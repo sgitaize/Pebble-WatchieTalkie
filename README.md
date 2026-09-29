@@ -19,7 +19,7 @@ WatchieTalkie2 is a **continuation of the former [Watchie-Talkie](https://apps.r
 - **Lightweight server:** Node.js with no dependencies, a single file, JSON storage; info page with statistics (users, messages, how many dictated); Docker supported
 
 ## Why a phone notification?
-A Pebble app cannot listen for messages while it is closed. In the past a server sent timeline pins for this, but the new Pebble app (Core) does not fetch timeline pins from servers. What remains is a regular phone notification that the Pebble app forwards to the watch. For this, the server sends a short notice ("New message: sender", never the content) to a service of your choice (settings page → "Phone notification"):
+A Pebble app cannot listen for messages while it is closed. In the past a server sent timeline pins for this, but the new Pebble app (Core) does not fetch timeline pins from servers. What remains is a regular phone notification that the Pebble app forwards to the watch. For this, the server sends a short notice ("New message: sender" or "Contact request from name", never the content) to a service of your choice (settings page → "Phone notification"):
 
 | Service | Cost | Setup |
 |---|---|---|

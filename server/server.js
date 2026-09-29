@@ -45,7 +45,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.6.0';
+const VERSION = '1.7.0';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -225,12 +225,17 @@ function pushBudget() {                        // Notbremse gegen Fluten: höchs
 }
 /* Benachrichtigung bei geschlossener App: Timeline-Pin (nur Rebble-App) und/oder Handy-Benachrichtigung
    (ntfy, Telegram-Bot oder Pushover – der Nutzer wählt in den Einstellungen). Die Core-App holt keine
-   Timeline-Pins vom Server ab. Inhalt immer nur „New message: <Absender>“, nie der Nachrichtentext. */
+   Timeline-Pins vom Server ab. Inhalt immer nur „New message: <Absender>“ bzw. Kontaktanfrage, nie der Nachrichtentext. */
 function notifyClosed(r, u, a, msg) {
   if (r.cfg.notify === false) return;
   const title = a.group ? a.group.title + ': ' + u.name : u.name;
   if (r.tl) pushPin(r, title, msg);
-  const c = r.cfg, text = 'New message: ' + title;
+  pushPhone(r, 'New message: ' + title);
+}
+/* Nur Handy-Benachrichtigung (z. B. Kontaktanfrage) über den gewählten Dienst */
+function pushPhone(r, text) {
+  if (r.cfg.notify === false) return;
+  const c = r.cfg;
   const push = c.push !== undefined ? c.push : (c.ntfy ? 'ntfy' : '');   // Konten aus 1.3.0 kannten nur ntfy
   if (push === 'ntfy' && c.ntfy && NTFY_URL !== 'off')
     httpsPost('ntfy', r, (c.ntfyUrl || NTFY_URL) + '/' + c.ntfy, text,
@@ -443,7 +448,7 @@ route('POST', /^\/v1\/me\/telegram$/, true, async (req, b, u) => {
   return meView(u);
 });
 
-route('DELETE', /^\/v1\/me$/, true, (req, b, u) => {
+function deleteUser(u) {
   for (const n in u.contacts) if (db.users[n]) delete db.users[n].contacts[u.name];
   for (const gid of u.groups.concat(u.ginv)) leaveGroup(u, db.groups[gid]);
   for (const k in db.chats) if (k.startsWith('d:') && k.slice(2).split('|').includes(u.name)) delete db.chats[k];
@@ -452,8 +457,15 @@ route('DELETE', /^\/v1\/me$/, true, (req, b, u) => {
   for (const a of u.aliases || []) byAlias.delete(a);
   delete db.users[u.name];
   save();
-  return { ok: true };
-});
+}
+route('DELETE', /^\/v1\/me$/, true, (req, b, u) => { deleteUser(u); return { ok: true }; });
+/* Betreiber: Konten löschen ohne deren Token – Namen (je Zeile) in data/delete-users.txt, Neustart; Datei wird danach umbenannt */
+try {
+  const f = path.join(path.dirname(DB_FILE), 'delete-users.txt');
+  const names = fs.readFileSync(f, 'utf8').split(/\s+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+  for (const n of names) { const u = db.users[n]; console.log('Betreiber-Löschung', n, u ? 'gelöscht' : 'nicht gefunden'); if (u) deleteUser(u); }
+  fs.renameSync(f, f + '.done');
+} catch (e) { if (e.code !== 'ENOENT') console.error('delete-users.txt', e.message); }
 
 /* Zweitnamen: unter weiteren Namen erreichbar sein (z. B. Entwickler- und Privatname); Kontakte sehen danach den Hauptnamen */
 route('POST', /^\/v1\/me\/aliases$/, true, (req, b, u) => {
@@ -485,8 +497,8 @@ route('POST', /^\/v1\/contacts$/, true, (req, b, u) => {
   if (limited('inv:' + u.name, 30, 3600000)) fail(429, 'Zu viele Einladungen, bitte später');
   const st = u.contacts[r.name];
   if (st === 'ok' || st === 'out') return meView(u);
-  if (st === 'in') { u.contacts[r.name] = 'ok'; r.contacts[u.name] = 'ok'; }
-  else if (!r.blocked.includes(u.name)) { u.contacts[r.name] = 'out'; r.contacts[u.name] = 'in'; wake(r.name); }
+  if (st === 'in') { u.contacts[r.name] = 'ok'; r.contacts[u.name] = 'ok'; pushPhone(r, u.name + ' accepted your contact request'); }
+  else if (!r.blocked.includes(u.name)) { u.contacts[r.name] = 'out'; r.contacts[u.name] = 'in'; wake(r.name); pushPhone(r, 'Contact request from ' + u.name); }
   else u.contacts[r.name] = 'out';             // Blockiert: sieht für den Absender aus wie eine offene Einladung
   save();
   return meView(u);
@@ -496,6 +508,7 @@ route('POST', /^\/v1\/contacts\/([a-z0-9_]{3,16})\/accept$/, true, (req, b, u, m
   if (u.contacts[r.name] !== 'in') fail(404, 'Keine Einladung von ' + r.name);
   u.contacts[r.name] = 'ok'; r.contacts[u.name] = 'ok';
   save();
+  pushPhone(r, u.name + ' accepted your contact request');
   return meView(u);
 });
 route('DELETE', /^\/v1\/contacts\/([a-z0-9_]{3,16})$/, true, (req, b, u, m) => {   // entfernen, ablehnen, zurückziehen
