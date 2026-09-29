@@ -103,8 +103,11 @@ docker compose up -d           # port 3000, data in the "data" volume; settings 
 | `PUSHOVER_TOKEN` | – | Pushover application token for all users (otherwise everyone enters their own) |
 | `SERVER_NAME` | WatchieTalkie2 | Display name |
 | `DONATE_URL` | project donation link | Donate button on the info page, `off` = hidden |
+| `ADMIN_KEY` | – | Enables the operator page `/admin` (alternatively put the SHA-256 hex of the key into `server/data/admin-key`). Without it there is no admin page. |
 
 Data is stored in `server/data/db.json` (ciphertext only) – copy the file to back it up. **If you run a public server, you must replace `public/impressum.html` (legal notice) with your own details.**
+
+**Admin page:** `https://<your server>/admin` – log in with the admin key. Shows counters and all accounts (metadata only: names, aliases, created/last seen, contact/group counts, push service; never tokens, keys, push credentials or messages) and lets you delete accounts. "Unsaved" accounts were registered but never saved to a phone (nobody can log in to them); a button removes those older than 24 h. Wrong keys are limited to 10 attempts per 10 minutes and IP.
 
 ### API (summary)
 
@@ -133,6 +136,7 @@ JSON, authentication with `Authorization: Bearer <device token>`. Chat IDs: `u.<
 | GET | `/v1/poll?since=&wait=&invites=` | Everything new since message number (`del` = chats with deleted messages); with `wait` (≤ 25 s) long polling |
 | POST | `/v1/me/telegram` | `{bot}` connect Telegram bot (chat ID via getUpdates), `{bot: ''}` disconnects |
 | POST | `/v1/test` | `{delay?}` (0–60 s) test message from the server in the read-only chat `u.watchietalkie` (fixed plain text `t`, with phone/timeline notification) – 5 per 10 min |
+| GET · DELETE | `/v1/admin/users` · `/v1/admin/users/:name` | Admin only (`Authorization: Admin <key>`): account list + counters / delete account |
 
 ## Development
 

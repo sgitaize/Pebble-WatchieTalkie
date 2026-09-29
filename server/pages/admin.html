@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>WatchieTalkie2 Admin</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<style>
+  :root{--bg:#f3f1ec;--panel:#fff;--fg:#1b1b19;--muted:#6f6d66;--line:#dedad1;--accent:#c23a12;--ok:#2e7d32;--bad:#c62828}
+  @media (prefers-color-scheme: dark){:root{--bg:#0f1110;--panel:#1a1d1b;--fg:#ecebe6;--muted:#9c9b94;--line:#2d312e;--accent:#ff7a4d;--ok:#66bb6a;--bad:#ef5350}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+  main{max-width:1100px;margin:0 auto;padding:16px}
+  h1{font-family:Georgia,serif;font-style:italic;font-size:24px;margin:6px 0 14px}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  input,button{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--fg)}
+  input{flex:1;min-width:180px}input[type=checkbox]{flex:none;min-width:0;width:18px;height:18px;padding:0;accent-color:var(--accent)}
+  button{cursor:pointer}button.bad{color:var(--bad);border-color:var(--bad)}button.small{padding:3px 8px;font-size:13px}
+  .muted{color:var(--muted)}.err{color:var(--bad)}.ok{color:var(--ok)}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+  .stats div{border:1px solid var(--line);border-radius:10px;padding:8px 10px}.stats b{display:block;font-size:22px}
+  .tbl{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--muted);font-weight:600}
+  tr.orphan td:first-child::after{content:" · unsaved";color:var(--bad);font-size:12px}
+  tr.test{opacity:.55}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<main>
+  <h1>WatchieTalkie2 Admin</h1>
+  <section id="login">
+    <div class="row"><input type="password" id="key" placeholder="Admin key" autocomplete="current-password"><button id="loginBtn">Log in</button></div>
+    <p class="muted">The key stays in this browser tab only (session storage).</p>
+  </section>
+  <div id="app" class="hidden">
+    <section>
+      <div class="row" style="justify-content:space-between"><span class="muted" id="ver"></span>
+        <span class="row"><button id="refresh">Refresh</button><button id="logout">Log out</button></span></div>
+      <div class="stats" id="stats" style="margin-top:10px"></div>
+    </section>
+    <section>
+      <div class="row" style="justify-content:space-between;margin-bottom:8px">
+        <input type="search" id="filter" placeholder="Filter by name">
+        <label class="row" style="gap:4px"><input type="checkbox" id="showTest"> test accounts</label>
+        <button class="bad" id="purge">Delete unsaved accounts (&gt; 24 h)</button>
+      </div>
+      <p class="muted" style="margin:0 0 8px">"Unsaved" = no public key: the account was created but never saved to a phone, so nobody can log in to it.</p>
+      <div class="tbl"><table><thead><tr><th>Name</th><th>Aliases</th><th>Created</th><th>Last seen</th><th>Contacts</th><th>Invites in/out</th><th>Groups</th><th>Push</th><th></th></tr></thead><tbody id="users"></tbody></table></div>
+    </section>
+  </div>
+  <p id="msg"></p>
+</main>
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+let key = '';
+try { key = sessionStorage.getItem('wtAdmin') || ''; } catch (e) { /* egal */ }
+let data = null;
+const DAY = 86400000;
+const fmt = (t) => { if (!t) return '–'; const d = new Date(t); return d.toISOString().slice(0, 10) + ' ' + d.toTimeString().slice(0, 5); };
+const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + ' min' : m < 2880 ? Math.round(m / 60) + ' h' : Math.round(m / 1440) + ' d'; };
+function msg(text, ok) { $('msg').textContent = text || ''; $('msg').className = ok ? 'ok' : 'err'; }
+async function api(method, path) {
+  const r = await fetch(path, { method, headers: { Authorization: 'Admin ' + key, 'Accept-Language': 'en' } });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(j.error || 'Error ' + r.status); e.status = r.status; throw e; }
+  return j;
+}
+const orphan = (u) => !u.pubKey && !u.test;
+async function load() {
+  try { data = await api('GET', '/v1/admin/users'); } catch (e) {
+    if (e.status === 401 || e.status === 404) { key = ''; try { sessionStorage.removeItem('wtAdmin'); } catch (x) { /* egal */ } }
+    $('login').classList.toggle('hidden', !!key); $('app').classList.toggle('hidden', !key);
+    return msg(e.status === 404 ? 'Admin is not enabled on this server (no ADMIN_KEY).' : e.message);
+  }
+  try { sessionStorage.setItem('wtAdmin', key); } catch (e) { /* egal */ }
+  $('login').classList.add('hidden'); $('app').classList.remove('hidden'); msg('');
+  render();
+}
+function render() {
+  const s = data.stats;
+  $('ver').textContent = 'Server ' + data.version + ' · statistics since ' + fmt(s.since).slice(0, 10);
+  const orph = data.users.filter(orphan).length;
+  const active7 = data.users.filter((u) => !u.test && Date.now() - u.seen < 7 * DAY).length;
+  $('stats').innerHTML = '';
+  [['Accounts', s.users], ['Active 7 d', active7], ['Unsaved', orph], ['Test', s.test], ['Groups', s.groups], ['Chats', s.chats], ['Messages', s.messages], ['Voice', s.voice]]
+    .forEach(([l, v]) => { const d = document.createElement('div'); d.innerHTML = '<span class="muted"></span><b></b>'; d.firstChild.textContent = l; d.lastChild.textContent = v; $('stats').appendChild(d); });
+  const f = $('filter').value.trim().toLowerCase();
+  const tb = $('users'); tb.innerHTML = '';
+  for (const u of data.users) {
+    if (u.test && !$('showTest').checked) continue;
+    if (f && !u.name.includes(f) && !u.aliases.some((a) => a.includes(f))) continue;
+    const tr = document.createElement('tr');
+    if (orphan(u)) tr.className = 'orphan'; else if (u.test) tr.className = 'test';
+    const cells = [u.name, u.aliases.join(', ') || '–', fmt(u.created), ago(u.seen) + ' ago', u.contacts, u.invitesIn + ' / ' + u.invitesOut, u.groups,
+      (u.push || '–') + (u.timeline ? ' + timeline' : '')];
+    for (const c of cells) { const td = document.createElement('td'); td.textContent = c; tr.appendChild(td); }
+    const td = document.createElement('td'); const b = document.createElement('button');
+    b.className = 'bad small'; b.textContent = 'Delete';
+    b.onclick = () => del([u.name]);
+    td.appendChild(b); tr.appendChild(td); tb.appendChild(tr);
+  }
+  if (!tb.children.length) tb.innerHTML = '<tr><td colspan="9" class="muted">No accounts</td></tr>';
+}
+async function del(names) {
+  if (!names.length) return msg('Nothing to delete', true);
+  if (!confirm('Permanently delete ' + names.join(', ') + ' with all contacts and chats?')) return;
+  let n = 0;
+  for (const name of names) { try { await api('DELETE', '/v1/admin/users/' + name); n++; } catch (e) { msg(name + ': ' + e.message); } }
+  await load();
+  if (n) msg(n + ' account(s) deleted', true);
+}
+$('loginBtn').onclick = () => { key = $('key').value; $('key').value = ''; load(); };
+$('key').onkeydown = (e) => { if (e.key === 'Enter') $('loginBtn').onclick(); };
+$('refresh').onclick = load;
+$('logout').onclick = () => { key = ''; try { sessionStorage.removeItem('wtAdmin'); } catch (e) { /* egal */ } data = null; $('app').classList.add('hidden'); $('login').classList.remove('hidden'); msg(''); };
+$('filter').oninput = $('showTest').onchange = () => { if (data) render(); };
+$('purge').onclick = () => del(data.users.filter((u) => orphan(u) && Date.now() - u.created > DAY).map((u) => u.name));
+if (key) load();
+</script>
+</body>
+</html>

@@ -28,7 +28,7 @@ async function main() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-'));
     for (const f of ['server.js', 'pages']) fs.cpSync(path.join(__dirname, f), path.join(dir, f), { recursive: true });
     const port = 30000 + Math.floor(Math.random() * 20000);
-    child = spawn(process.execPath, [path.join(dir, 'server.js')], { env: Object.assign({}, process.env, { PORT: port, TIMELINE_API: 'off' }), stdio: 'inherit' });
+    child = spawn(process.execPath, [path.join(dir, 'server.js')], { env: Object.assign({}, process.env, { PORT: port, TIMELINE_API: 'off', ADMIN_KEY: 'test-admin-key' }), stdio: 'inherit' });
     base = 'http://127.0.0.1:' + port;
     for (let i = 0; i < 50; i++) { try { await fetch(base + '/v1/info'); break; } catch (e) { await new Promise((r) => setTimeout(r, 100)); } }
   }
@@ -259,6 +259,21 @@ async function main() {
   const big = await fetch(base + '/v1/register', { method: 'POST', body: 'x'.repeat(40000) }).catch(() => ({ status: 413 }));
   ok(big.status === 413, 'zu großer Body → 413');
   ok((await fetch(base + '/')).status === 200 && (await fetch(base + '/impressum.html')).status === 200, 'Startseite + Impressum');
+  ok((await fetch(base + '/admin')).status === 200, 'Admin-Seite erreichbar');
+  // Admin (nur lokal, Schlüssel aus der Umgebung)
+  if (child) {
+    const adm = (method, p, key) => fetch(base + p, { method, headers: { Authorization: 'Admin ' + key } }).then(async (r) => ({ status: r.status, body: await r.json() }));
+    ok((await adm('GET', '/v1/admin/users', 'falsch')).status === 401, 'Admin: falscher Schlüssel → 401');
+    ok((await fetch(base + '/v1/admin/users')).status === 401, 'Admin: ohne Schlüssel → 401');
+    const ro = await api('POST', '/v1/register', { name: 'to_' + sfx });
+    const l = await adm('GET', '/v1/admin/users', 'test-admin-key');
+    const o = l.body.users && l.body.users.find((x) => x.name === 'to_' + sfx);
+    ok(l.status === 200 && o && o.pubKey === false && typeof l.body.stats.users === 'number', 'Admin: Liste mit ungespeichertem Konto');
+    const raw = JSON.stringify(l.body);
+    ok(!raw.includes(ro.body.token) && !/"th"|"cfg"|"pk"|"tl"|ntfy"/.test(raw), 'Admin: keine Token/Schlüssel/Push-Zugänge');
+    ok((await adm('DELETE', '/v1/admin/users/to_' + sfx, 'test-admin-key')).status === 200 && (await api('GET', '/v1/me', null, ro.body.token)).status === 401, 'Admin: Konto gelöscht');
+    ok((await adm('DELETE', '/v1/admin/users/to_' + sfx, 'test-admin-key')).status === 404, 'Admin: unbekanntes Konto → 404');
+  }
 }
 
 main().catch((e) => { failed++; console.log('✗ Abbruch: ' + e.stack); }).finally(() => {

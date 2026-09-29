@@ -18,6 +18,7 @@
  *   PUSHOVER_TOKEN    Pushover-Anwendungstoken des Servers (optional; sonst trägt jeder Nutzer sein eigenes ein)
  *   SERVER_NAME       Anzeigename des Servers (Standard "WatchieTalkie2")
  *   DONATE_URL        Spendenlink auf der Info-Seite (Standard: Projekt-Spendenlink, "off" = ausblenden)
+ *   ADMIN_KEY         Schlüssel für die Betreiber-Seite /admin (alternativ SHA-256 davon in data/admin-key; ohne = keine Admin-Seite)
  */
 'use strict';
 const http = require('http');
@@ -45,7 +46,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.7.0';
+const VERSION = '1.8.0';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -317,10 +318,11 @@ function systemMessage(u, text) {
 
 /* ------------------------------------------------------------- Grenzen -- */
 const buckets = new Map();
-function limited(key, max, windowMs) {
+function limited(key, max, windowMs, peek) {     // peek: nur prüfen, nicht mitzählen
   const t = now();
   const l = (buckets.get(key) || []).filter((x) => t - x < windowMs);
   if (l.length >= max) { buckets.set(key, l); return true; }
+  if (peek) return false;
   l.push(t); buckets.set(key, l);
   return false;
 }
@@ -673,6 +675,46 @@ route('POST', /^\/v1\/test$/, true, (req, b, u) => {
 route('GET', /^\/v1\/stats$/, false, () => ({ users: Object.values(db.users).filter((x) => !x.test).length, groups: Object.keys(db.groups).length,
   messages: db.stats.messages, voice: db.stats.voice, since: db.stats.since, version: VERSION, name: SERVER_NAME }));
 
+/* ------------------------------------------------------------------ Admin -- */
+/* Betreiber-Seite /admin. Schlüssel: ADMIN_KEY (Umgebung) oder SHA-256 des Schlüssels in data/admin-key.
+   Ohne Schlüssel gibt es keine Admin-Routen (404). Zeigt nur Metadaten – nie Token, Schlüssel oder Push-Zugänge. */
+function adminHash() {
+  if (process.env.ADMIN_KEY) return sha(process.env.ADMIN_KEY);
+  try { const h = fs.readFileSync(path.join(DATA, 'admin-key'), 'utf8').trim().toLowerCase(); return /^[0-9a-f]{64}$/.test(h) ? h : ''; } catch (e) { return ''; }
+}
+function needAdmin(req) {
+  const h = adminHash();
+  if (!h) fail(404, 'Nicht gefunden');
+  const ip = clientIp(req);
+  if (limited('admfail:' + ip, 10, 600000, true)) fail(429, 'Zu viele Anfragen');
+  const m = /^Admin (.+)$/.exec(String(req.headers.authorization || ''));
+  const got = Buffer.from(sha(m ? m[1] : ''), 'hex'), want = Buffer.from(h, 'hex');
+  if (!crypto.timingSafeEqual(got, want)) { limited('admfail:' + ip, 10, 600000); fail(401, 'Admin-Schlüssel falsch'); }
+}
+function adminUser(u) {
+  const c = { ok: 0, in: 0, out: 0 };
+  for (const n in u.contacts) c[u.contacts[n]]++;
+  const c2 = u.cfg || {};
+  return { name: u.name, aliases: (u.aliases || []).slice(), created: u.created, seen: u.seen, pubKey: !!u.pk, test: !!u.test,
+    contacts: c.ok, invitesIn: c.in, invitesOut: c.out, groups: u.groups.length, blocked: u.blocked.length,
+    push: c2.push !== undefined ? c2.push : (c2.ntfy ? 'ntfy' : ''), timeline: !!u.tl };
+}
+route('GET', /^\/v1\/admin\/users$/, false, (req) => {
+  needAdmin(req);
+  const us = Object.values(db.users);
+  return { version: VERSION, users: us.map(adminUser).sort((a, b) => b.created - a.created),
+    stats: { users: us.filter((x) => !x.test).length, test: us.filter((x) => x.test).length, groups: Object.keys(db.groups).length,
+      chats: Object.keys(db.chats).length, messages: db.stats.messages, voice: db.stats.voice, since: db.stats.since } };
+});
+route('DELETE', /^\/v1\/admin\/users\/([a-z0-9_]{3,16})$/, false, (req, b, u, m) => {
+  needAdmin(req);
+  const r = db.users[m[1]];
+  if (!r) fail(404, 'Nicht gefunden');
+  deleteUser(r);
+  console.log('Admin-Löschung', m[1]);
+  return { ok: true };
+});
+
 /* Long-Polling: Wartende Abfragen je Nutzer; neue Nachrichten/Einladungen wecken sie sofort */
 const waiters = new Map();            // Name → Set von Weck-Funktionen
 let waiterCount = 0;
@@ -718,7 +760,7 @@ route('GET', /^\/v1\/poll$/, true, (req, b, u, m, q) => {
 });
 
 /* --------------------------------------------------------------- HTTP -- */
-const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/impressum.html': 'impressum.html', '/favicon.svg': 'favicon.svg', '/icon.svg': 'icon.svg' };
+const STATIC = { '/admin': 'admin.html', '/': 'index.html', '/index.html': 'index.html', '/impressum.html': 'impressum.html', '/favicon.svg': 'favicon.svg', '/icon.svg': 'icon.svg' };
 const TYPES = { html: 'text/html; charset=utf-8', svg: 'image/svg+xml' };
 /* Fehlermeldungen auf Englisch, wenn der Client nicht Deutsch spricht (Accept-Language) */
 const EN_ERR = { 'Ungültiges ntfy-Thema (12–64 Zeichen A–Z, 0–9, _ -)': 'Invalid ntfy topic (12–64 characters A–Z, 0–9, _ -)',
@@ -740,7 +782,7 @@ const EN_ERR = { 'Ungültiges ntfy-Thema (12–64 Zeichen A–Z, 0–9, _ -)': '
   'Zu viele Kontakte': 'Too many contacts', 'Zu viele Zweitnamen': 'Too many aliases', 'Zu viele Nachrichten, bitte kurz warten': 'Too many messages, please wait a moment',
   'Zu viele Registrierungen, bitte später': 'Too many registrations, please try later', 'Zu viele neue Gruppen, bitte später': 'Too many new groups, please try later',
   'Ungültige Adresse': 'Invalid address', 'Nicht gefunden': 'Not found', 'Zu viele Anfragen': 'Too many requests', 'Nur der Besitzer der Gruppe darf das': 'Only the group owner can do that',
-  'Nachricht nicht gefunden': 'Message not found', 'Nur eigene Nachrichten können gelöscht werden': 'You can only delete your own messages', 'Zu groß': 'Too large', 'Serverfehler': 'Server error' };
+  'Nachricht nicht gefunden': 'Message not found', 'Nur eigene Nachrichten können gelöscht werden': 'You can only delete your own messages', 'Zu groß': 'Too large', 'Serverfehler': 'Server error', 'Admin-Schlüssel falsch': 'Wrong admin key' };
 function english(msg) {
   if (EN_ERR[msg]) return EN_ERR[msg];
   let m = /^Keine Einladung von (.*)$/.exec(msg); if (m) return 'No invitation from ' + m[1];
