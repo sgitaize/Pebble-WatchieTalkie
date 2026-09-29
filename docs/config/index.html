@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>WatchieTalkie2 – Einstellungen</title>
+<title>WatchieTalkie2 – Settings</title>
 <meta name="referrer" content="no-referrer">
 <link rel="icon" href="../icon.svg">
 <style>
@@ -39,89 +39,89 @@
 
   <section>
     <h2>Server</h2>
-    <div class="row"><input type="url" id="server" autocomplete="off"><button id="checkServer">Prüfen</button></div>
-    <p data-en="Default: the public WatchieTalkie2 server. With your own server you only chat with people on that server." class="muted" id="serverInfo">Standard: der öffentliche WatchieTalkie2-Server. Mit eigenem Server chattest du nur mit Leuten auf diesem Server.</p>
+    <div class="row"><input type="url" id="server" autocomplete="off"><button id="checkServer">Check</button></div>
+    <p class="muted" id="serverInfo">Default: the public WatchieTalkie2 server. With your own server you only chat with people on that server.</p>
   </section>
 
   <section id="register" class="hidden">
-    <h2 data-en="Create account">Konto anlegen</h2>
-    <label data-en="Username (3–16 characters: a–z, 0–9, _)" for="regName">Benutzername (3–16 Zeichen: a–z, 0–9, _)</label>
+    <h2>Create account</h2>
+    <label for="regName">Username (3–16 characters: a–z, 0–9, _)</label>
     <input type="text" id="regName" autocapitalize="none" autocomplete="off" maxlength="16">
-    <div id="regCodeBox" class="hidden"><label data-en="Registration code (from the server operator)" for="regCode">Registrierungscode (vom Betreiber des Servers)</label><input type="password" id="regCode"></div>
-    <p><button data-en="Create account" class="main" id="regBtn">Konto anlegen</button></p>
-    <details><summary data-en="I already have an account (transfer from old phone)" class="muted">Ich habe schon ein Konto (vom alten Handy übertragen)</summary>
-      <label data-en="Transfer code from your old phone" for="tokenIn">Übertragungscode vom alten Handy</label>
-      <div class="row"><input type="text" id="tokenIn" autocomplete="off"><button data-en="Use" id="tokenBtn">Übernehmen</button></div>
+    <div id="regCodeBox" class="hidden"><label for="regCode">Registration code (from the server operator)</label><input type="password" id="regCode"></div>
+    <p><button class="main" id="regBtn">Create account</button></p>
+    <details><summary class="muted">I already have an account (transfer from old phone)</summary>
+      <label for="tokenIn">Transfer code from your old phone</label>
+      <div class="row"><input type="text" id="tokenIn" autocomplete="off"><button id="tokenBtn">Use</button></div>
     </details>
   </section>
 
   <div id="account" class="hidden">
     <section>
-      <h2 data-en="Account">Konto</h2>
-      <p><span data-en="Logged in as">Angemeldet als</span> <b id="meName"></b></p>
-      <details><summary data-en="Show transfer code (for a new phone)" class="muted">Übertragungscode anzeigen (für ein neues Handy)</summary>
-        <p data-en="Contains your login and your secret key. Anyone who knows it can read your messages and write in your name – never share it." class="muted">Enthält deinen Zugang und deinen geheimen Schlüssel. Wer ihn kennt, kann deine Nachrichten lesen und in deinem Namen schreiben – niemals weitergeben.</p><code id="tokenOut"></code>
+      <h2>Account</h2>
+      <p><span>Logged in as</span> <b id="meName"></b></p>
+      <details><summary class="muted">Show transfer code (for a new phone)</summary>
+        <p class="muted">Contains your login and your secret key. Anyone who knows it can read your messages and write in your name – never share it.</p><code id="tokenOut"></code>
       </details>
-      <p class="row"><button data-en="Log out on this phone" id="logoutBtn">Auf diesem Handy abmelden</button><button data-en="Delete account" class="bad" id="deleteBtn">Konto löschen</button></p>
+      <p class="row"><button id="logoutBtn">Log out on this phone</button><button class="bad" id="deleteBtn">Delete account</button></p>
     </section>
 
     <section>
-      <h2 data-en="Encryption">Verschlüsselung</h2>
-      <p data-en="Messages are encrypted on your phone; the server operator cannot read them. Only who writes to whom and when stays visible. Compare your safety numbers once in person – if they match, nobody is listening in." class="muted">Nachrichten werden auf deinem Handy verschlüsselt; der Server-Betreiber kann sie nicht lesen. Sichtbar für ihn bleibt nur, wer wann mit wem schreibt. Vergleicht eure Sicherheitsnummern einmal persönlich – stimmen sie, liest niemand dazwischen mit.</p>
-      <p><span data-en="Your safety number:">Deine Sicherheitsnummer:</span> <b id="myFp">–</b></p>
+      <h2>Encryption</h2>
+      <p class="muted">Messages are encrypted on your phone; the server operator cannot read them. Only who writes to whom and when stays visible. Compare your safety numbers once in person – if they match, nobody is listening in.</p>
+      <p><span>Your safety number:</span> <b id="myFp">–</b></p>
       <div id="changedBox" class="msg err hidden"></div>
       <ul id="fps"></ul>
     </section>
 
     <section>
-      <h2 data-en="Contacts">Kontakte</h2>
-      <label data-en="Invite a friend (username)" for="inviteName">Freund einladen (Benutzername)</label>
-      <div class="row"><input type="text" id="inviteName" autocapitalize="none" autocomplete="off" maxlength="16"><button data-en="Invite" class="main" id="inviteBtn">Einladen</button></div>
-      <div id="invitesInBox"><label data-en="Requests to you">Anfragen an dich</label><ul id="invitesIn"></ul></div>
-      <label data-en="Your contacts">Deine Kontakte</label><ul id="contacts"></ul>
-      <div id="invitesOutBox"><label data-en="Not accepted yet">Noch nicht angenommen</label><ul id="invitesOut"></ul></div>
-      <div id="blockedBox"><label data-en="Blocked">Blockiert</label><ul id="blocked"></ul></div>
+      <h2>Contacts</h2>
+      <label for="inviteName">Invite a friend (username)</label>
+      <div class="row"><input type="text" id="inviteName" autocapitalize="none" autocomplete="off" maxlength="16"><button class="main" id="inviteBtn">Invite</button></div>
+      <div id="invitesInBox"><label>Requests to you</label><ul id="invitesIn"></ul></div>
+      <label>Your contacts</label><ul id="contacts"></ul>
+      <div id="invitesOutBox"><label>Not accepted yet</label><ul id="invitesOut"></ul></div>
+      <div id="blockedBox"><label>Blocked</label><ul id="blocked"></ul></div>
     </section>
 
     <section>
-      <h2 data-en="Groups">Gruppen</h2>
-      <div id="groupInvitesBox"><label data-en="Group invitations">Gruppeneinladungen</label><ul id="groupInvites"></ul></div>
+      <h2>Groups</h2>
+      <div id="groupInvitesBox"><label>Group invitations</label><ul id="groupInvites"></ul></div>
       <ul id="groups"></ul>
-      <details><summary data-en="New group">Neue Gruppe</summary>
-        <label data-en="Name" for="groupTitle">Name</label><input type="text" id="groupTitle" maxlength="24">
-        <label data-en="Invite members">Mitglieder einladen</label><div id="groupMembers" class="muted"></div>
-        <p><button data-en="Create group" class="main" id="groupBtn">Gruppe erstellen</button></p>
+      <details><summary>New group</summary>
+        <label for="groupTitle">Name</label><input type="text" id="groupTitle" maxlength="24">
+        <label>Invite members</label><div id="groupMembers" class="muted"></div>
+        <p><button class="main" id="groupBtn">Create group</button></p>
       </details>
     </section>
 
     <section>
-      <h2 data-en="Quick replies">Schnellantworten</h2>
-      <p data-en="One per line, up to 10 with 40 characters each. On the watch: hold SELECT in a chat (watches without microphone: press)." class="muted">Eine pro Zeile, höchstens 10 mit je 40 Zeichen. Auf der Uhr: im Chat SELECT lang drücken (Uhren ohne Mikrofon: kurz).</p>
+      <h2>Quick replies</h2>
+      <p class="muted">One per line, up to 10 with 40 characters each. On the watch: hold SELECT in a chat (watches without microphone: press).</p>
       <textarea id="qr"></textarea>
     </section>
 
     <section>
-      <h2 data-en="Watch">Uhr</h2>
-      <div class="check"><input type="checkbox" id="vibe"><label data-en="Vibrate on new message (app open)" for="vibe" style="margin:0;color:inherit">Vibrieren bei neuer Nachricht (App offen)</label></div>
-      <div class="check"><input type="checkbox" id="beep"><label for="beep" style="margin:0;color:inherit" data-en="Radio beep on new message (watches with speaker: Time 2, Pebble 2 Duo, Round 2)">Funk-Piep bei neuer Nachricht (Uhren mit Lautsprecher: Time 2, Pebble 2 Duo, Round 2)</label></div>
-      <div class="check"><input type="checkbox" id="notify"><label data-en="Notify when the app is closed (timeline)" for="notify" style="margin:0;color:inherit">Benachrichtigung, wenn die App zu ist (Timeline)</label></div>
+      <h2>Watch</h2>
+      <div class="check"><input type="checkbox" id="vibe"><label for="vibe" style="margin:0;color:inherit">Vibrate on new message (app open)</label></div>
+      <div class="check"><input type="checkbox" id="beep"><label for="beep" style="margin:0;color:inherit">Radio beep on new message (watches with speaker: Time 2, Pebble 2 Duo, Round 2)</label></div>
+      <div class="check"><input type="checkbox" id="notify"><label for="notify" style="margin:0;color:inherit">Notify when the app is closed (timeline)</label></div>
       <p class="muted" id="timelineInfo"></p>
+      <h2>Test message</h2>
+      <p class="muted">The server sends you a message in the chat "WatchieTalkie". "In 15 s": save, close the app on the watch and check the notification.</p>
+      <p class="row"><button id="testNow">Send now</button><button id="testLater">In 15 s</button></p>
     </section>
   </div>
 
-  <p data-en="Use at your own risk, without any guarantee of availability or delivery. Users are responsible for their content. A free hobby continuation of the former Watchie-Talkie (offline)." class="muted">Nutzung auf eigene Gefahr, ohne Gewähr für Verfügbarkeit oder Zustellung. Für Inhalte sind die Nutzer selbst verantwortlich. Weiterführung des früheren Watchie-Talkie (offline) als freies Hobbyprojekt.</p>
-  <p class="muted"><a data-en="Imprint, privacy &amp; liability of the server" id="impressum" href="#">Impressum, Datenschutz &amp; Haftung des Servers</a> · <a data-en="Open source on GitHub" href="https://github.com/sgitaize/Pebble-WatchieTalkie">Open Source auf GitHub</a></p>
+  <p class="muted">Use at your own risk, without any guarantee of availability or delivery. Users are responsible for their content. A free hobby continuation of the former Watchie-Talkie (offline).</p>
+  <p class="muted"><a id="impressum" href="#">Imprint, privacy &amp; liability of the server</a> · <a href="https://github.com/sgitaize/Pebble-WatchieTalkie">Open source on GitHub</a></p>
 </main>
-<footer><div class="row"><button data-en="Save &amp; back to watch" class="main" id="saveBtn">Speichern &amp; zurück zur Uhr</button></div></footer>
+<footer><div class="row"><button class="main" id="saveBtn">Save &amp; back to watch</button></div></footer>
 
 <script src="nacl.min.js"></script>
 <script>
 'use strict';
 const DEFAULT_SERVER = 'https://watchietalkie.aize-it.de';
 const $ = (id) => document.getElementById(id);
-const DE = /^de/i.test(navigator.language || '');
-const T = (de, en) => (DE ? de : en);
-if (!DE) { document.documentElement.lang = 'en'; document.querySelectorAll('[data-en]').forEach((el) => { el.innerHTML = el.dataset.en; }); }
 let init = {};
 try { init = JSON.parse(decodeURIComponent(location.hash.slice(1)) || '{}'); } catch (e) { init = {}; }
 const params = new URLSearchParams(location.search);
@@ -156,11 +156,11 @@ function flash(text, ok) {
 async function api(method, path, body) {
   let r;
   try {
-    r = await fetch(server + path, { method, headers: Object.assign({ 'Content-Type': 'application/json', 'Accept-Language': DE ? 'de' : 'en' }, token ? { Authorization: 'Bearer ' + token } : {}),
+    r = await fetch(server + path, { method, headers: Object.assign({ 'Content-Type': 'application/json', 'Accept-Language': 'en' }, token ? { Authorization: 'Bearer ' + token } : {}),
       body: body ? JSON.stringify(body) : undefined });
-  } catch (e) { throw new Error(T('Server nicht erreichbar: ', 'Server unreachable: ') + server); }
+  } catch (e) { throw new Error('Server unreachable: ' + server); }
   let j = {}; try { j = await r.json(); } catch (e) { /* leer */ }
-  if (!r.ok) { const err = new Error(j.error || (T('Fehler ', 'Error ') + r.status)); err.status = r.status; throw err; }
+  if (!r.ok) { const err = new Error(j.error || ('Error ' + r.status)); err.status = r.status; throw err; }
   return j;
 }
 function li(name, buttons) {
@@ -188,38 +188,38 @@ function render() {
   $('meName').textContent = me.name;
   ensureKeys();
   $('tokenOut').textContent = 'WT1:' + token + ':' + sk;
-  $('myFp').textContent = fingerprint(unb64(sk)) + (newKeys ? T(' (neu – wird beim Speichern übernommen)', ' (new – applied when you save)') : '');
+  $('myFp').textContent = fingerprint(unb64(sk)) + (newKeys ? ' (new – applied when you save)' : '');
   const fps = init.fps || {};
   const ul = $('fps'); ul.innerHTML = '';
-  me.contacts.forEach((n) => ul.appendChild(li(n + ': ' + (fps[n] || T('noch unbekannt – App einmal öffnen', 'not known yet – open the app once')), [])));
+  me.contacts.forEach((n) => ul.appendChild(li(n + ': ' + (fps[n] || 'not known yet – open the app once'), [])));
   const ch = (init.changed || []).filter(() => !ackChanged);
   $('changedBox').classList.toggle('hidden', !ch.length);
   if (ch.length) {
-    $('changedBox').textContent = T('Der Sicherheitsschlüssel von ' + ch.join(', ') + ' hat sich geändert (neues Handy – oder jemand liest mit). Vergleicht die Sicherheitsnummer persönlich. ', 'The security key of ' + ch.join(', ') + ' has changed (new phone – or someone is listening in). Compare the safety number in person. ');
-    const b = document.createElement('button'); b.className = 'small'; b.textContent = T('Geprüft', 'Checked');
+    $('changedBox').textContent = ('The security key of ' + ch.join(', ') + ' has changed (new phone – or someone is listening in). Compare the safety number in person. ');
+    const b = document.createElement('button'); b.className = 'small'; b.textContent = 'Checked';
     b.onclick = () => { ackChanged = true; render(); }; $('changedBox').appendChild(b);
   }
-  fill('invitesIn', me.invitesIn, (n) => li(n, [[T('Annehmen', 'Accept'), act('POST', '/v1/contacts/' + n + '/accept', null, n + T(' ist jetzt dein Kontakt', ' is now your contact'))],
-    [T('Ablehnen', 'Decline'), act('DELETE', '/v1/contacts/' + n)], [T('Blockieren', 'Block'), act('POST', '/v1/blocks', { name: n }), 'bad']]));
-  fill('contacts', me.contacts, (n) => li(n, [[T('Entfernen', 'Remove'), async () => { if (confirm(n + T(' entfernen? Der Chat verschwindet für euch beide.', ': remove? The chat disappears for both of you.'))) await act('DELETE', '/v1/contacts/' + n)(); }],
-    [T('Blockieren', 'Block'), async () => { if (confirm(n + T(' blockieren?', ': block?'))) await act('POST', '/v1/blocks', { name: n })(); }, 'bad']]), T('Noch keine – lade oben jemanden ein.', 'None yet – invite someone above.'));
-  fill('invitesOut', me.invitesOut, (n) => li(n, [[T('Zurückziehen', 'Withdraw'), act('DELETE', '/v1/contacts/' + n)]]));
-  fill('blocked', me.blocked, (n) => li(n, [[T('Freigeben', 'Unblock'), act('DELETE', '/v1/blocks/' + n)]]));
-  fill('groupInvites', me.groupInvites, (g) => li(g.title + T(' (von ', ' (from ') + g.owner + ')', [[T('Annehmen', 'Accept'), act('POST', '/v1/groups/' + g.id + '/accept', null, T('Gruppe beigetreten', 'Joined group'))],
-    [T('Ablehnen', 'Decline'), act('DELETE', '/v1/groups/' + g.id)]]));
+  fill('invitesIn', me.invitesIn, (n) => li(n, [['Accept', act('POST', '/v1/contacts/' + n + '/accept', null, n + ' is now your contact')],
+    ['Decline', act('DELETE', '/v1/contacts/' + n)], ['Block', act('POST', '/v1/blocks', { name: n }), 'bad']]));
+  fill('contacts', me.contacts, (n) => li(n, [['Remove', async () => { if (confirm(n + ': remove? The chat disappears for both of you.')) await act('DELETE', '/v1/contacts/' + n)(); }],
+    ['Block', async () => { if (confirm(n + ': block?')) await act('POST', '/v1/blocks', { name: n })(); }, 'bad']]), 'None yet – invite someone above.');
+  fill('invitesOut', me.invitesOut, (n) => li(n, [['Withdraw', act('DELETE', '/v1/contacts/' + n)]]));
+  fill('blocked', me.blocked, (n) => li(n, [['Unblock', act('DELETE', '/v1/blocks/' + n)]]));
+  fill('groupInvites', me.groupInvites, (g) => li(g.title + ' (from ' + g.owner + ')', [['Accept', act('POST', '/v1/groups/' + g.id + '/accept', null, 'Joined group')],
+    ['Decline', act('DELETE', '/v1/groups/' + g.id)]]));
   fill('groups', me.groups, (g) => {
-    const el = li(g.title + ' – ' + g.members.join(', ') + (g.invited.length ? T(' (eingeladen: ', ' (invited: ') + g.invited.join(', ') + ')' : ''), [
-      [T('Einladen', 'Invite'), async () => {
+    const el = li(g.title + ' – ' + g.members.join(', ') + (g.invited.length ? ' (invited: ' + g.invited.join(', ') + ')' : ''), [
+      ['Invite', async () => {
         const free = me.contacts.filter((n) => !g.members.includes(n) && !g.invited.includes(n));
-        if (!free.length) return flash(T('Alle deine Kontakte sind schon in der Gruppe.', 'All your contacts are already in the group.'));
-        const n = prompt(T('Wen einladen? (', 'Invite whom? (') + free.join(', ') + ')', free[0]);
-        if (n) await act('POST', '/v1/groups/' + g.id + '/invite', { name: n.trim().toLowerCase() }, T('Eingeladen', 'Invited'))();
+        if (!free.length) return flash('All your contacts are already in the group.');
+        const n = prompt('Invite whom? (' + free.join(', ') + ')', free[0]);
+        if (n) await act('POST', '/v1/groups/' + g.id + '/invite', { name: n.trim().toLowerCase() }, 'Invited')();
       }],
-      [T('Umbenennen', 'Rename'), async () => { const t = prompt(T('Neuer Name', 'New name'), g.title); if (t) await act('PUT', '/v1/groups/' + g.id, { title: t })(); }],
-      [T('Verlassen', 'Leave'), async () => { if (confirm(T('Gruppe „' + g.title + '“ verlassen?', 'Leave group "' + g.title + '"?'))) await act('DELETE', '/v1/groups/' + g.id)(); }, 'bad']]);
+      ['Rename', async () => { const t = prompt('New name', g.title); if (t) await act('PUT', '/v1/groups/' + g.id, { title: t })(); }],
+      ['Leave', async () => { if (confirm(('Leave group "' + g.title + '"?'))) await act('DELETE', '/v1/groups/' + g.id)(); }, 'bad']]);
     return el;
-  }, T('Noch keine Gruppen.', 'No groups yet.'));
-  $('groupMembers').innerHTML = me.contacts.length ? '' : T('Erst Kontakte hinzufügen.', 'Add contacts first.');
+  }, 'No groups yet.');
+  $('groupMembers').innerHTML = me.contacts.length ? '' : 'Add contacts first.';
   me.contacts.forEach((n) => {
     const l = document.createElement('label'); l.className = 'check';
     l.innerHTML = '<input type="checkbox" value="' + n + '"> ' + n;
@@ -230,8 +230,8 @@ function render() {
   $('notify').checked = me.cfg.notify !== false;
   $('beep').checked = me.cfg.beep !== false;
   $('timelineInfo').textContent = me.timeline
-    ? T('Deine Uhr ist für Timeline-Benachrichtigungen angemeldet.', 'Your watch is registered for timeline notifications.')
-    : T('Noch kein Timeline-Token: klappt nur, wenn WatchieTalkie2 aus dem Pebble-App-Store installiert ist. Die App meldet sich beim nächsten Öffnen automatisch an.', 'No timeline token yet: only works if WatchieTalkie2 was installed from the Pebble app store. The app registers automatically the next time it opens.');
+    ? 'Your watch is registered for timeline notifications.'
+    : 'No timeline token yet: only works if WatchieTalkie2 was installed from the Pebble app store. The app registers automatically the next time it opens.';
 }
 
 async function loadServer() {
@@ -239,14 +239,14 @@ async function loadServer() {
   $('impressum').href = server + '/impressum.html';
   try {
     const i = await api('GET', '/v1/info');
-    $('serverInfo').textContent = i.name + ' ' + i.version + T(' · Registrierung ', ' · registration ') + (i.registration === 'open' ? T('offen', 'open') : T('nur mit Code', 'code only')) +
-      T(' · bis ', ' · up to ') + i.historyMax + T(' Nachrichten je Chat, ', ' messages per chat, ') + i.historyDays + T(' Tage', ' days');
+    $('serverInfo').textContent = i.name + ' ' + i.version + ' · registration ' + (i.registration === 'open' ? 'open' : 'code only') +
+      ' · up to ' + i.historyMax + ' messages per chat, ' + i.historyDays + ' days';
     $('regCodeBox').classList.toggle('hidden', i.registration !== 'code');
   } catch (e) { $('serverInfo').textContent = e.message; }
   me = null;
   if (token) {
     try { me = await api('GET', '/v1/me'); } catch (e) {
-      if (e.status === 401) { token = ''; flash(T('Dein Konto gibt es auf diesem Server nicht (mehr). Bitte neu anlegen.', 'Your account does not exist on this server (anymore). Please create a new one.')); } else flash(e.message);
+      if (e.status === 401) { token = ''; flash('Your account does not exist on this server (anymore). Please create a new one.'); } else flash(e.message);
     }
   }
   render();
@@ -254,41 +254,43 @@ async function loadServer() {
 
 $('checkServer').onclick = () => {
   const v = $('server').value.trim().replace(/\/$/, '');
-  if (!/^https?:\/\/[^\s/]+/.test(v)) return flash(T('Bitte eine Adresse mit https:// angeben', 'Please enter an address starting with https://'));
+  if (!/^https?:\/\/[^\s/]+/.test(v)) return flash('Please enter an address starting with https://');
   if (v !== server) { server = v; token = ''; }
   loadServer();
 };
 $('regBtn').onclick = async () => {
   try {
     const r = await api('POST', '/v1/register', { name: $('regName').value.trim().toLowerCase(), code: $('regCode').value });
-    token = r.token; flash(T('Willkommen, ', 'Welcome, ') + r.name + '!', true);
-    if (!/^de/i.test(navigator.language || '')) {
-      try { await api('PUT', '/v1/me', { cfg: { qr: ['OK', 'On my way', 'Call me', 'Later', 'Yes', 'No', 'Thanks!'] } }); } catch (e) { /* egal */ }
-    }
+    token = r.token; flash('Welcome, ' + r.name + '!', true);
     await loadServer();
   } catch (e) { flash(e.message); }
 };
 $('tokenBtn').onclick = async () => {
   const m = /^WT1:([a-f0-9]{64}):([A-Za-z0-9+/]{43}=)$/.exec($('tokenIn').value.trim());
-  if (!m || !unb64(m[2]) || unb64(m[2]).length !== 32) return flash(T('Das ist kein gültiger Übertragungscode (beginnt mit WT1:).', 'This is not a valid transfer code (starts with WT1:).'));
+  if (!m || !unb64(m[2]) || unb64(m[2]).length !== 32) return flash('This is not a valid transfer code (starts with WT1:).');
   token = m[1]; sk = m[2]; newKeys = false; await loadServer();
-  if (me) flash(T('Angemeldet als ', 'Logged in as ') + me.name, true);
+  if (me) flash('Logged in as ' + me.name, true);
 };
-$('logoutBtn').onclick = () => { if (confirm(T('Auf diesem Handy abmelden? Ohne Übertragungscode kommst du nicht mehr an dein Konto und deine Nachrichten.', 'Log out on this phone? Without the transfer code you lose access to your account and messages.'))) { token = ''; sk = ''; me = null; render(); } };
+$('logoutBtn').onclick = () => { if (confirm('Log out on this phone? Without the transfer code you lose access to your account and messages.')) { token = ''; sk = ''; me = null; render(); } };
 $('deleteBtn').onclick = async () => {
-  if (!confirm(T('Konto „' + me.name + '“ mit allen Kontakten und Chats endgültig löschen?', 'Permanently delete account "' + me.name + '" with all contacts and chats?'))) return;
-  try { await api('DELETE', '/v1/me'); token = ''; me = null; render(); flash(T('Konto gelöscht', 'Account deleted'), true); } catch (e) { flash(e.message); }
+  if (!confirm(('Permanently delete account "' + me.name + '" with all contacts and chats?'))) return;
+  try { await api('DELETE', '/v1/me'); token = ''; me = null; render(); flash('Account deleted', true); } catch (e) { flash(e.message); }
 };
 $('inviteBtn').onclick = async () => {
   const n = $('inviteName').value.trim().toLowerCase();
   if (!n) return;
   try { await act('POST', '/v1/contacts', { name: n })(); $('inviteName').value = '';
-    flash(me.contacts.includes(n) ? n + T(' ist jetzt dein Kontakt', ' is now your contact') : T('Einladung an ', 'Invitation sent to ') + n + T(' verschickt', ''), true); } catch (e) { flash(e.message); }
+    flash(me.contacts.includes(n) ? n + ' is now your contact' : 'Invitation sent to ' + n + '', true); } catch (e) { flash(e.message); }
 };
 $('groupBtn').onclick = async () => {
   const members = [...$('groupMembers').querySelectorAll('input:checked')].map((x) => x.value);
-  try { await act('POST', '/v1/groups', { title: $('groupTitle').value, members }, T('Gruppe erstellt', 'Group created'))(); $('groupTitle').value = ''; } catch (e) { flash(e.message); }
+  try { await act('POST', '/v1/groups', { title: $('groupTitle').value, members }, 'Group created')(); $('groupTitle').value = ''; } catch (e) { flash(e.message); }
 };
+const sendTest = (delay) => async () => {
+  try { await api('POST', '/v1/test', { delay }); flash(delay ? 'Test message comes in ' + delay + ' s – close the app on the watch now' : 'Test message sent – look at your watch', true); } catch (e) { flash(e.message); }
+};
+$('testNow').onclick = sendTest(0);
+$('testLater').onclick = sendTest(15);
 $('qr').oninput = () => { $('qr').dataset.touched = '1'; };
 $('saveBtn').onclick = async () => {
   if (me) {

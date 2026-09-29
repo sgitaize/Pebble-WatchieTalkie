@@ -43,7 +43,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -66,7 +66,7 @@ const NAME_RE = /^[a-z0-9][a-z0-9_]{2,15}$/;
 const RESERVED = new Set(['admin', 'administrator', 'root', 'system', 'support', 'server', 'watchietalkie', 'watchietalkie2', 'psst', 'pebble', 'rebble',
   'null', 'undefined', 'constructor', 'prototype', 'hasownproperty', 'tostring', 'valueof']);
 const B64 = /^[A-Za-z0-9+/]+={0,2}$/;
-const DEFAULT_CFG = { qr: ['OK', 'Bin unterwegs', 'Ruf mich an', 'Später', 'Ja', 'Nein', 'Danke!'], vibe: true, notify: true, beep: true };
+const DEFAULT_CFG = { qr: ['OK', 'On my way', 'Call me', 'Later', 'Yes', 'No', 'Thanks!'], vibe: true, notify: true, beep: true };
 
 /* ------------------------------------------------------------ Speicher -- */
 /* Alle Nachschlage-Tabellen ohne Prototyp: Namen wie "constructor" oder "__proto__" können nichts manipulieren */
@@ -106,6 +106,10 @@ process.on('uncaughtException', (e) => { console.error('Unerwarteter Fehler', e)
 const now = () => Date.now();
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 const dmKey = (a, b) => 'd:' + (a < b ? a + '|' + b : b + '|' + a);
+/* System-Chat "WatchieTalkie": nur lesbar, enthält Testnachrichten des Servers (fester Klartext, keine Nutzerdaten) */
+const SYSTEM = 'watchietalkie';
+const SYS_CID = 'u.' + SYSTEM;
+const sysKey = (name) => 's:' + name;
 const cleanText = (s, max) => String(s == null ? '' : s).replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ').trim().slice(0, max);
 
 function newUser(name, token) {
@@ -123,6 +127,7 @@ function chatAccess(u, cid) {
   const m = /^([ug])\.([a-z0-9_]{3,16})$/.exec(String(cid || ''));
   if (!m) return null;
   if (m[1] === 'u') {
+    if (m[2] === SYSTEM) return db.chats[sysKey(u.name)] ? { key: sysKey(u.name), to: [], cid, sys: true } : null;
     if (u.contacts[m[2]] !== 'ok') return null;
     return { key: dmKey(u.name, m[2]), to: [m[2]], cid };
   }
@@ -132,6 +137,7 @@ function chatAccess(u, cid) {
 }
 function chatOf(key) { return db.chats[key] || (db.chats[key] = { msgs: [] }); }
 function chatTitle(u, cid) {
+  if (cid === SYS_CID) return 'WatchieTalkie';
   if (cid[0] === 'u') return cid.slice(2);
   const g = db.groups[cid.slice(2)];
   return g ? g.title : cid;
@@ -140,6 +146,7 @@ function chatList(u) {
   const out = [];
   for (const n in u.contacts) if (u.contacts[n] === 'ok') out.push('u.' + n);
   for (const gid of u.groups) if (db.groups[gid]) out.push('g.' + gid);
+  if (db.chats[sysKey(u.name)]) out.push(SYS_CID);
   return out.map((cid) => {
     const a = chatAccess(u, cid);
     const msgs = (a && db.chats[a.key] && db.chats[a.key].msgs) || [];
@@ -159,7 +166,9 @@ function meView(u) {
 }
 /* Nachricht für einen Leser: nur sein eigener Schlüsselumschlag */
 function msgView(m, reader) {
-  return { id: m.id, f: m.f, ts: m.ts, e: m.e ? { v: m.e.v, n: m.e.n, c: m.e.c, k: m.e.k[reader] || null } : null };
+  const v = { id: m.id, f: m.f, ts: m.ts, e: m.e ? { v: m.e.v, n: m.e.n, c: m.e.c, k: m.e.k[reader] || null } : null };
+  if (m.t) v.t = m.t;                        // nur Systemnachrichten haben Klartext
+  return v;
 }
 /* Verschlüsselte Nachricht prüfen: {v:1, n:Nonce, c:Chiffretext, k:{name: Umschlag}} – Klartext wird nicht angenommen */
 function cleanEnc(e, names) {
@@ -204,10 +213,10 @@ function pushPin(r, u, a, msg) {
   if (pinsSent.length > 120) return;          // Notbremse gegen Fluten
   pinsSent.push(t);
   const title = a.group ? a.group.title + ': ' + u.name : u.name;
-  const layout = { type: 'genericPin', title, body: 'Neue Nachricht', tinyIcon: 'system://images/GENERIC_EMAIL' };
+  const layout = { type: 'genericPin', title, body: 'New message', tinyIcon: 'system://images/GENERIC_EMAIL' };
   const pin = { id: 'wt-' + msg.id + '-' + r.name, time: new Date(msg.ts).toISOString(), layout,
-    createNotification: { layout: { type: 'genericNotification', title, body: 'Neue Nachricht', tinyIcon: 'system://images/GENERIC_EMAIL' } },
-    actions: [{ title: 'Antworten', type: 'openWatchApp', launchCode: 1 }] };
+    createNotification: { layout: { type: 'genericNotification', title, body: 'New message', tinyIcon: 'system://images/GENERIC_EMAIL' } },
+    actions: [{ title: 'Reply', type: 'openWatchApp', launchCode: 1 }] };
   const body = JSON.stringify(pin);
   try {
     const url = new URL(TIMELINE_API.replace(/\/$/, '') + '/v1/user/pins/' + encodeURIComponent(pin.id));
@@ -221,6 +230,20 @@ function pushPin(r, u, a, msg) {
     req.on('timeout', () => req.destroy());
     req.end(body);
   } catch (e) { console.error('Timeline', e.message); }
+}
+
+/* Testnachricht: kommt über denselben Weg wie echte Nachrichten (Polling + Timeline-Pin).
+   Mit Verzögerung kann man die App vorher schließen und so die Benachrichtigung prüfen. */
+function systemMessage(u, text) {
+  const a = { key: sysKey(u.name), to: [], cid: SYS_CID, sys: true };
+  const ch = chatOf(a.key);
+  const msg = { id: ++db.seq, f: SYSTEM, t: text, ts: now() };
+  ch.msgs.push(msg);
+  if (ch.msgs.length > 10) ch.msgs.splice(0, ch.msgs.length - 10);
+  save();
+  wake(u.name);
+  if (u.tl && u.cfg.notify !== false) pushPin(u, { name: 'WatchieTalkie' }, a, msg);
+  return msg;
 }
 
 /* ------------------------------------------------------------- Grenzen -- */
@@ -308,6 +331,7 @@ route('DELETE', /^\/v1\/me$/, true, (req, b, u) => {
   for (const n in u.contacts) if (db.users[n]) delete db.users[n].contacts[u.name];
   for (const gid of u.groups.concat(u.ginv)) leaveGroup(u, db.groups[gid]);
   for (const k in db.chats) if (k.startsWith('d:') && k.slice(2).split('|').includes(u.name)) delete db.chats[k];
+  delete db.chats[sysKey(u.name)];
   byToken.delete(u.th);
   delete db.users[u.name];
   save();
@@ -449,6 +473,7 @@ route('GET', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/messages$/, true, (req, b, 
 route('POST', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/messages$/, true, (req, b, u, m) => {
   const a = chatAccess(u, m[1]);
   if (!a) fail(404, 'Chat nicht gefunden');
+  if (a.sys) fail(403, 'Dieser Chat ist schreibgeschützt');
   const e = cleanEnc(b.e, [u.name].concat(a.to));
   if (limited('msg:' + u.name, 30, 60000) || limited('msgh:' + u.name, 600, 3600000)) fail(429, 'Zu viele Nachrichten, bitte kurz warten');
   return { msg: msgView(postMessage(u, a, e, b.voice === true), u.name) };
@@ -459,6 +484,15 @@ route('POST', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/read$/, true, (req, b, u, 
   const upTo = Math.min(db.seq, Number(b.upTo) || db.seq);
   if (upTo > (u.read[a.key] || 0)) { u.read[a.key] = upTo; save(); }
   return { ok: true };
+});
+route('POST', /^\/v1\/test$/, true, (req, b, u) => {
+  if (limited('test:' + u.name, 5, 600000)) fail(429, 'Zu viele Anfragen');
+  const delay = Math.max(0, Math.min(60, Math.round(Number(b.delay) || 0)));
+  const name = u.name;
+  const text = 'Test message received - WatchieTalkie2 works!' + (delay ? ' (sent with ' + delay + ' s delay)' : '');
+  if (!delay) return { ok: true, delay, msg: msgView(systemMessage(u, text), name) };
+  setTimeout(() => { if (db.users[name]) systemMessage(db.users[name], text); }, delay * 1000);
+  return { ok: true, delay };
 });
 /* Alles Neue seit "since" (Nachrichten-Nummer) – ein Aufruf reicht fürs Polling */
 /* Öffentliche Statistik für die Info-Seite (nur Zähler, nichts Persönliches) */
@@ -512,7 +546,7 @@ route('GET', /^\/v1\/poll$/, true, (req, b, u, m, q) => {
 const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/impressum.html': 'impressum.html', '/favicon.svg': 'favicon.svg', '/icon.svg': 'icon.svg' };
 const TYPES = { html: 'text/html; charset=utf-8', svg: 'image/svg+xml' };
 /* Fehlermeldungen auf Englisch, wenn der Client nicht Deutsch spricht (Accept-Language) */
-const EN_ERR = { 'Chat nicht gefunden': 'Chat not found', 'Das bist du selbst': 'That is you', 'Dieser Name ist reserviert': 'This name is reserved',
+const EN_ERR = { 'Chat nicht gefunden': 'Chat not found', 'Dieser Chat ist schreibgeschützt': 'This chat is read-only', 'Das bist du selbst': 'That is you', 'Dieser Name ist reserviert': 'This name is reserved',
   'Du hast diesen Nutzer blockiert': 'You blocked this user', 'Gruppe ist voll': 'Group is full', 'Gruppe nicht gefunden': 'Group not found',
   'Gruppenname fehlt': 'Group name missing', 'Kein Mitglied': 'Not a member', 'Keine Einladung': 'No invitation',
   'Nachricht muss verschlüsselt sein – bitte App aktualisieren': 'Message must be encrypted – please update the app',

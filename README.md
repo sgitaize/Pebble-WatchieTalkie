@@ -115,6 +115,7 @@ JSON, Anmeldung mit `Authorization: Bearer <Geräte-Token>`. Chat-IDs: `u.<name>
 | GET · POST | `/v1/chats/:id/messages` | Historie (`?limit=`) / senden `{e, voice?}` (`voice` zählt nur für die Statistik) |
 | POST | `/v1/chats/:id/read` | `{upTo}` gelesen markieren |
 | GET | `/v1/poll?since=&wait=&invites=` | alles Neue seit Nachrichten-Nummer; mit `wait` (≤ 25 s) Long-Polling |
+| POST | `/v1/test` | `{delay?}` (0–60 s) Testnachricht des Servers im nur lesbaren Chat `u.watchietalkie` (fester Klartext `t`, mit Timeline-Pin) – 5 je 10 min |
 
 ## Entwicklung
 

@@ -151,6 +151,22 @@ async function main() {
   r = await api('DELETE', '/v1/blocks/' + C, null, ta);
   ok(!r.body.blocked.includes(C), 'Blockierung aufgehoben');
 
+  // Testnachricht vom Server (System-Chat, nur lesbar, kommt übers Polling)
+  const seqT = (await api('GET', '/v1/chats', null, tc)).body.seq;
+  r = await api('POST', '/v1/test', { delay: 0 }, tc);
+  ok(r.status === 200 && r.body.msg && r.body.msg.t, 'Testnachricht sofort');
+  r = await api('GET', '/v1/poll?since=' + seqT, null, tc);
+  ok(r.body.msgs.some((x) => x.chat === 'u.watchietalkie' && x.f === 'watchietalkie' && x.t), 'Testnachricht per Polling');
+  r = await api('GET', '/v1/chats', null, tc);
+  ok(r.body.chats.some((x) => x.id === 'u.watchietalkie' && x.title === 'WatchieTalkie' && x.unread === 1), 'System-Chat in der Liste');
+  ok((await api('GET', '/v1/chats/u.watchietalkie/messages', null, tc)).body.msgs.length === 1, 'System-Chat lesbar');
+  ok((await api('POST', '/v1/chats/u.watchietalkie/messages', { e: {} }, tc)).status === 403, 'System-Chat schreibgeschützt');
+  ok(!(await api('GET', '/v1/chats', null, ta)).body.chats.some((x) => x.id === 'u.watchietalkie'), 'System-Chat nur beim Anfordernden');
+  r = await api('POST', '/v1/test', { delay: 1 }, tc);
+  ok(r.status === 200 && r.body.delay === 1 && !r.body.msg, 'Testnachricht verzögert angenommen');
+  r = await api('GET', '/v1/poll?wait=5&since=' + (seqT + 1), null, tc);
+  ok(r.body.msgs.some((x) => x.chat === 'u.watchietalkie'), 'verzögerte Testnachricht weckt Long-Poll');
+
   // Austritt, Kontakt entfernen, Konto löschen
   r = await api('DELETE', '/v1/groups/' + gid, null, tb);
   ok(r.body.groups.length === 0, 'Gruppe verlassen');

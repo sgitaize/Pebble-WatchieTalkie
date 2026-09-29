@@ -8,7 +8,8 @@ E2E.init({ get: function (k) { return localStorage.getItem(k); }, set: function 
 var DEFAULT_SERVER = 'https://watchietalkie.aize-it.de';
 var CONFIG_URL = 'https://sgitaize.github.io/Pebble-WatchieTalkie/config/';
 var C = { LIST_ITEM: 2, MSG_ITEM: 5, NEW_MSG: 7, QR_ITEM: 8, STATUS: 9, SENT: 10,
-  READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25, SEND_VOICE: 26 };
+  READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25, SEND_VOICE: 26, TEST: 27 };
+var SYS_CID = 'u.watchietalkie';     // System-Chat des Servers (Testnachrichten, nur lesbar)
 var K = { CHAT: 0, CONTACT_INVITE: 1, GROUP_INVITE: 2 };
 
 var server = localStorage.getItem('wt.server') || DEFAULT_SERVER;
@@ -24,14 +25,6 @@ var pollTimer = null;
 function platform() {
   try { return Pebble.getActiveWatchInfo().platform; } catch (e) { return 'basalt'; }
 }
-/* Deutsch, wenn Uhr oder Handy auf Deutsch stehen, sonst Englisch */
-function isDe() {
-  var l = '';
-  try { l = Pebble.getActiveWatchInfo().language || ''; } catch (e) { /* egal */ }
-  if (!l && typeof navigator !== 'undefined') l = navigator.language || '';
-  return /^de/i.test(l);
-}
-function L(de, en) { return isDe() ? de : en; }
 function maxMsgs() { return platform() === 'aplite' ? 10 : 30; }
 
 /* ---------------------------------------------------------- Uhr-Warteschlange -- */
@@ -65,23 +58,23 @@ function trunc(s, bytes) {
   while (s.length && unescape(encodeURIComponent(s + '…')).length > bytes) s = s.slice(0, -1);
   return s + '…';
 }
-function status(text) { toWatch({ CMD: C.STATUS, TEXT: trunc(text, 60) }); }
+function status(text) { toWatch({ CMD: C.STATUS, TEXT: trunc(text, 150) }); }
 
 /* ---------------------------------------------------------------- Server -- */
 function api(method, path, body, cb) {
   var x = new XMLHttpRequest();
   x.open(method, server.replace(/\/$/, '') + path, true);
   x.setRequestHeader('Content-Type', 'application/json');
-  x.setRequestHeader('Accept-Language', isDe() ? 'de' : 'en');
+  x.setRequestHeader('Accept-Language', 'en');
   if (token) x.setRequestHeader('Authorization', 'Bearer ' + token);
   x.timeout = path.indexOf('wait=') >= 0 ? 40000 : 15000;
   x.onload = function () {
     var j = null;
     try { j = JSON.parse(x.responseText); } catch (e) { /* leer */ }
     if (x.status >= 200 && x.status < 300) cb(null, j || {});
-    else cb({ status: x.status, message: (j && j.error) || (L('Fehler ', 'Error ') + x.status) });
+    else cb({ status: x.status, message: (j && j.error) || ('Error ' + x.status) });
   };
-  x.onerror = x.ontimeout = function () { cb({ status: 0, message: L('Server nicht erreichbar', 'Server unreachable') }); };
+  x.onerror = x.ontimeout = function () { cb({ status: 0, message: 'Server unreachable' }); };
   x.send(body ? JSON.stringify(body) : null);
 }
 
@@ -108,16 +101,17 @@ function loadKeys(cb) {
       var old = []; try { old = JSON.parse(localStorage.getItem('wt.changed') || '[]'); } catch (e) { old = []; }
       changed.forEach(function (n) { if (old.indexOf(n) < 0) old.push(n); });
       localStorage.setItem('wt.changed', JSON.stringify(old));
-      status(L('Achtung: Sicherheitsschlüssel von ' + changed.join(', ') + ' hat sich geändert. In den Einstellungen prüfen.', 'Warning: security key of ' + changed.join(', ') + ' changed. Check in settings.'));
+      status(('Warning: security key of ' + changed.join(', ') + ' changed. Check in settings.'));
     }
     cb(null);
   });
 }
 function readable(msg) {
+  if (msg && msg.t && msg.f === 'watchietalkie') return msg.t;   // Systemnachricht (Klartext vom Server)
   if (!msg || !msg.e) return '';
   var pk = msg.f === (me && me.name) ? E2E.publicKey() : keys[msg.f];
   var t = pk ? E2E.decrypt(msg.e, pk) : null;
-  return t === null ? L('[nicht lesbar]', '[unreadable]') : t;
+  return t === null ? '[unreadable]' : t;
 }
 /* Empfänger eines Chats mit Schlüsseln; fehlende Schlüssel werden gemeldet */
 function recipients(cid) {
@@ -134,19 +128,19 @@ function changedList() { try { return JSON.parse(localStorage.getItem('wt.change
 function loadChats() {
   if (!token) {
     toWatch({ CMD: C.LIST_ITEM, IDX: 0, COUNT: 0 });
-    status(L('Noch nicht eingerichtet. Öffne in der Pebble-App die Einstellungen von WatchieTalkie2.', 'Not set up yet. Open the WatchieTalkie2 settings in the Pebble app.'));
+    status('Not set up yet. Open the WatchieTalkie2 settings in the Pebble app.');
     return;
   }
   api('GET', '/v1/me', null, function (err, m) {
     if (err) {
       toWatch({ CMD: C.LIST_ITEM, IDX: 0, COUNT: 0 });
-      return status(err.status === 401 ? L('Anmeldung ungültig. Bitte in den Einstellungen neu einrichten.', 'Login invalid. Please set up again in the settings.') : err.message);
+      return status(err.status === 401 ? 'Login invalid. Please set up again in the settings.' : err.message);
     }
     me = m;
     sendQuickReplies();
     if (!E2E.ready()) {
       toWatch({ CMD: C.LIST_ITEM, IDX: 0, COUNT: 0 });
-      return status(L('Schlüssel fehlen. Bitte einmal die Einstellungen öffnen und speichern.', 'Keys missing. Please open the settings once and save.'));
+      return status('Keys missing. Please open the settings once and save.');
     }
     if (m.pubKey !== E2E.publicKey()) api('PUT', '/v1/me', { pubKey: E2E.publicKey() }, function () {});
     loadKeys(function () { api('GET', '/v1/chats', null, function (err2, c) {
@@ -156,8 +150,8 @@ function loadChats() {
       m.invitesIn.forEach(function (n) { items.push({ id: 'u.' + n, title: n, kind: K.CONTACT_INVITE, unread: 0, text: '' }); });
       m.groupInvites.forEach(function (g) { items.push({ id: 'g.' + g.id, title: g.title, kind: K.GROUP_INVITE, unread: 0, text: '' }); });
       c.chats.forEach(function (ch) {
-        var prev = ch.last ? (ch.group && ch.last.f !== m.name ? ch.last.f + ': ' : (ch.last.f === m.name ? L('Du: ', 'You: ') : '')) + readable(ch.last) : (ch.group ? L('Gruppe', 'Group') : '');
-        if (!ch.group && changedList().indexOf(ch.title) >= 0) prev = L('! Schlüssel geändert', '! Key changed');
+        var prev = ch.last ? (ch.group && ch.last.f !== m.name ? ch.last.f + ': ' : (ch.last.f === m.name ? 'You: ' : '')) + readable(ch.last) : (ch.group ? 'Group' : '');
+        if (!ch.group && changedList().indexOf(ch.title) >= 0) prev = '! Key changed';
         items.push({ id: ch.id, title: ch.title, kind: K.CHAT, unread: Math.min(ch.unread, 99), text: prev });
       });
       lastInvites = c.invites;
@@ -165,7 +159,7 @@ function loadChats() {
       items = items.slice(0, max);
       if (!items.length) {
         toWatch({ CMD: C.LIST_ITEM, IDX: 0, COUNT: 0 });
-        return status(L('Hallo ' + m.name + '! Noch keine Kontakte – lade Freunde in den Einstellungen ein.', 'Hi ' + m.name + '! No contacts yet – invite friends in the settings.'));
+        return status(('Hi ' + m.name + '! No contacts yet - invite friends in the settings. Press SELECT for a test message.'));
       }
       items.forEach(function (it, i) {
         toWatch({ CMD: C.LIST_ITEM, IDX: i, COUNT: items.length, CHAT: it.id, TITLE: trunc(it.title, 25), TEXT: trunc(it.text, 43), UNREAD: it.unread, KIND: it.kind });
@@ -190,14 +184,22 @@ function loadMessages(cid) {
 
 function sendMessage(cid, text, voice) {
   var fail = function (msg) { toWatch({ CMD: C.SENT, FLAGS: 0, TEXT: trunc(msg, 60) }); };
-  if (!me || !E2E.ready()) return fail(L('Nicht eingerichtet', 'Not set up'));
+  if (!me || !E2E.ready()) return fail('Not set up');
+  if (cid === SYS_CID) return fail('This chat is read-only');
   var r = recipients(cid);
-  if (r.total && r.missing.length === r.total) return fail(r.missing.join(', ') + L(' muss WatchieTalkie2 erst öffnen', ' must open WatchieTalkie2 first'));
+  if (r.total && r.missing.length === r.total) return fail(r.missing.join(', ') + ' must open WatchieTalkie2 first');
   var e;
-  try { e = E2E.encrypt(String(text).slice(0, TEXT_MAX), r.keys); } catch (x) { return fail(L('Verschlüsseln fehlgeschlagen', 'Encryption failed')); }
+  try { e = E2E.encrypt(String(text).slice(0, TEXT_MAX), r.keys); } catch (x) { return fail('Encryption failed'); }
   api('POST', '/v1/chats/' + cid + '/messages', { e: e, voice: !!voice }, function (err) {
     toWatch(err ? { CMD: C.SENT, FLAGS: 0, TEXT: trunc(err.message, 60) } : { CMD: C.SENT, FLAGS: 1 });
   });
+}
+
+/* Testnachricht vom Server anfordern – kommt wie eine echte Nachricht über das Polling */
+function requestTest() {
+  if (!token || !me) return status('Not set up yet. Open the WatchieTalkie2 settings in the Pebble app.');
+  status('Requesting test message ...');
+  api('POST', '/v1/test', { delay: 0 }, function (err) { if (err) status(err.message); });
 }
 
 function answerInvite(cid, accept) {
@@ -265,6 +267,7 @@ Pebble.addEventListener('appmessage', function (e) {
   else if ((cmd === C.SEND || cmd === C.SEND_VOICE) && p.TEXT) sendMessage(cid, p.TEXT, cmd === C.SEND_VOICE);
   else if (cmd === C.ACCEPT) answerInvite(cid, true);
   else if (cmd === C.DECLINE) answerInvite(cid, false);
+  else if (cmd === C.TEST) requestTest();
 });
 
 Pebble.addEventListener('showConfiguration', function () {

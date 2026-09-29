@@ -7,7 +7,7 @@
 /* Befehle pkjs → Uhr */
 enum { C_LIST_ITEM = 2, C_MSG_ITEM = 5, C_NEW_MSG = 7, C_QR_ITEM = 8, C_STATUS = 9, C_SENT = 10 };
 /* Befehle Uhr → pkjs */
-enum { C_READY = 20, C_OPEN = 21, C_SEND = 22, C_CLOSE = 23, C_ACCEPT = 24, C_DECLINE = 25, C_SEND_VOICE = 26 };
+enum { C_READY = 20, C_OPEN = 21, C_SEND = 22, C_CLOSE = 23, C_ACCEPT = 24, C_DECLINE = 25, C_SEND_VOICE = 26, C_TEST = 27 };
 /* Art eines Listeneintrags */
 enum { K_CHAT = 0, K_CONTACT_INVITE = 1, K_GROUP_INVITE = 2 };
 
@@ -38,15 +38,12 @@ typedef struct { char *text; char from[17]; bool mine; int16_t h; } Msg;
 
 static Chat s_chats[MAX_CHATS];
 static int s_chat_count;
-/* Texte: Deutsch, wenn die Uhr auf Deutsch steht, sonst Englisch */
-static bool s_de;
+/* Texte (nur Englisch) */
 enum { T_LOADING, T_EMPTY_CHAT, T_NO_QR, T_ACCEPT, T_DECLINE, T_CONTACT_REQ, T_GROUP_INV, T_NO_VOICE, T_NEW_FROM, T_SEND_FAILED };
-static const char *T_DE[] = { "Lade …", "Noch keine Nachrichten.\nSELECT: sprechen\nlang SELECT: Schnellantwort", "Keine Schnellantworten",
-  "Annehmen", "Ablehnen", "Kontaktanfrage", "Gruppeneinladung", "Sprache nicht verfügbar", "Neu von %s", "Senden fehlgeschlagen" };
 static const char *T_EN[] = { "Loading …", "No messages yet.\nSELECT: speak\nhold SELECT: quick reply", "No quick replies",
   "Accept", "Decline", "Contact request", "Group invitation", "Voice not available", "New from %s", "Sending failed" };
-#define TR(i) (s_de ? T_DE[i] : T_EN[i])
-static char s_status[64] = "…";
+#define TR(i) (T_EN[i])
+static char s_status[160] = "…";
 
 static Msg s_msgs[MAX_MSGS];
 static int s_msg_count;
@@ -337,7 +334,7 @@ static void pick_open(int mode) {
 /* ------------------------------------------------------ Chatliste -- */
 static uint16_t main_rows(MenuLayer *m, uint16_t s, void *ctx) { return s_chat_count ? s_chat_count : 1; }
 static int16_t main_row_h(MenuLayer *m, MenuIndex *idx, void *ctx) {
-  if (!s_chat_count) return PBL_DISPLAY_WIDTH >= 200 ? 150 : 110;
+  if (!s_chat_count) return layer_get_bounds(menu_layer_get_layer(m)).size.h - PBL_IF_ROUND_ELSE(32 + 24, PBL_DISPLAY_WIDTH >= 200 ? 28 : 22);
   return PBL_IF_ROUND_ELSE(menu_layer_is_index_selected(m, idx) ? 60 : 36, PBL_DISPLAY_WIDTH >= 200 ? 56 : 44);
 }
 static void main_draw(GContext *ctx, const Layer *cell, MenuIndex *idx, void *data) {
@@ -368,8 +365,16 @@ static void main_header(GContext *ctx, const Layer *cell, uint16_t s, void *data
   graphics_context_set_text_color(ctx, PBL_IF_COLOR_ELSE(GColorYellow, GColorWhite));
   graphics_draw_text(ctx, "2", s_font_head, GRect(x + w1.w + 1, y, w2.w + 2, 22), GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
 }
+/* Rund: leere Liste (lange Statuszeile) nicht zentrieren, sonst rutscht die Kopfzeile aus dem Bild */
+static void main_reload(void) {
+  if (!s_menu) return;
+#if defined(PBL_ROUND)
+  menu_layer_set_center_focused(s_menu, s_chat_count > 0);
+#endif
+  menu_layer_reload_data(s_menu);
+}
 static void main_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
-  if (!s_chat_count) return;
+  if (!s_chat_count) { send_cmd(C_TEST, NULL, NULL); return; }   /* leere Liste: SELECT holt eine Testnachricht */
   Chat *c = &s_chats[idx->row];
   if (c->kind == K_CHAT) chat_open(c);
   else { s_pick_chat = *c; pick_open(1); }
@@ -407,7 +412,7 @@ static void inbox(DictionaryIterator *it, void *ctx) {
         c->unread = num(it, MESSAGE_KEY_UNREAD);
         c->kind = num(it, MESSAGE_KEY_KIND);
       }
-      if (s_menu) menu_layer_reload_data(s_menu);
+      main_reload();
       break;
     case C_MSG_ITEM:
       if (strcmp(str(it, MESSAGE_KEY_CHAT), s_open_chat) != 0) break;
@@ -443,7 +448,7 @@ static void inbox(DictionaryIterator *it, void *ctx) {
     case C_STATUS:
       copy(s_status, sizeof(s_status), str(it, MESSAGE_KEY_TEXT));
       if (s_chat_win) { if (s_chat_loading) { s_chat_loading = false; chat_relayout(false); } banner_show(s_status); }
-      if (s_menu) menu_layer_reload_data(s_menu);
+      main_reload();
       break;
     case C_SENT:
       if (!(num(it, MESSAGE_KEY_FLAGS) & 1)) { vibes_double_pulse(); banner_show(str(it, MESSAGE_KEY_TEXT)[0] ? str(it, MESSAGE_KEY_TEXT) : TR(T_SEND_FAILED)); }
@@ -452,7 +457,6 @@ static void inbox(DictionaryIterator *it, void *ctx) {
 }
 
 static void init(void) {
-  s_de = strncmp(i18n_get_system_locale(), "de", 2) == 0;
   snprintf(s_status, sizeof(s_status), "%s", TR(T_LOADING));
   s_font_body = fonts_get_system_font(FONT_BODY);
   s_font_head = fonts_get_system_font(FONT_HEAD);
