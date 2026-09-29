@@ -1,1 +1,1 @@
-1.1: Radio beep on new messages (watches with speaker), faster and more battery-friendly delivery (long polling), statistics on the server info page, English/German UI.
+1.2: Test message (press SELECT on the empty list or use the buttons in the settings) to check that receiving and notifications work. Fixed the cut-off welcome text. English UI on the watch and in the settings.
