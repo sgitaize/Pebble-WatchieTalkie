@@ -106,20 +106,41 @@
       <div class="check"><input type="checkbox" id="beep"><label for="beep" style="margin:0;color:inherit">Radio beep on new message (watches with speaker: Time 2, Pebble 2 Duo, Round 2)</label></div>
       <div class="check"><input type="checkbox" id="notify"><label for="notify" style="margin:0;color:inherit">Notify when the app is closed</label></div>
       <p class="muted" id="timelineInfo"></p>
-      <div id="ntfyBox">
-        <h2>Phone notification via ntfy (optional)</h2>
-        <p class="muted">Why? A Pebble watch app cannot listen for messages while it is closed, and the new Pebble app (Core) does not deliver timeline notifications from servers. So the only way to get a buzz while WatchieTalkie2 is closed is a normal phone notification, which the Pebble app forwards to your watch. For that the server uses the free, open-source <a href="https://ntfy.sh">ntfy</a> app (iOS and Android). Totally optional: without it, new messages still arrive whenever the app is open on the watch.</p>
-        <div class="check"><input type="checkbox" id="ntfyOn"><label for="ntfyOn" style="margin:0;color:inherit">Send me a phone notification via ntfy</label></div>
-        <div id="ntfySetup" class="hidden">
-          <p class="muted">1. Install ntfy: <a href="https://apps.apple.com/app/ntfy/id1625396347">iPhone</a> · <a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy">Android</a><br>
+      <div id="pushBox">
+        <h2>Phone notification (optional)</h2>
+        <p class="muted">Why? A Pebble watch app cannot listen for messages while it is closed, and the new Pebble app (Core) does not deliver timeline notifications from servers. So the only way to get a buzz while WatchieTalkie2 is closed is a normal phone notification, which the Pebble app forwards to your watch. Pick one of these apps for that. Totally optional: without it, new messages still arrive whenever the app is open on the watch. The notification only says "New message: &lt;sender&gt;", never the message itself (that stays end-to-end encrypted).</p>
+        <label for="push">Notify me via</label>
+        <select id="push">
+          <option value="">Nothing – only while the app is open</option>
+          <option value="ntfy">ntfy (free, iOS + Android)</option>
+          <option value="telegram">Telegram (your own bot)</option>
+          <option value="pushover">Pushover (iOS + Android, one-time purchase)</option>
+        </select>
+        <div id="pushNtfy" class="hidden">
+          <p class="muted">1. Install <a href="https://ntfy.sh">ntfy</a>: <a href="https://apps.apple.com/app/ntfy/id1625396347">iPhone</a> · <a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy">Android</a><br>
             2. In ntfy tap "+" and subscribe to this topic <span id="ntfyServerHint"></span>:</p>
           <p class="row"><input type="text" id="ntfyTopic" readonly><button id="ntfyCopy">Copy</button><button id="ntfyNew">New</button></p>
-          <p class="muted">3. In the Pebble app, allow notifications from ntfy.<br>
-            4. Test with "In 15 s" below and close the app on the watch.</p>
-          <p class="muted">The topic works like a password: anyone who knows it can read these notices, so keep it to yourself. ntfy only ever sees "New message: &lt;sender&gt;", never the message itself (that stays end-to-end encrypted).</p>
+          <p class="muted">The topic works like a password: anyone who knows it can read these notices, so keep it to yourself.</p>
           <label for="ntfyUrl">Own ntfy server (optional, https)</label>
           <input type="url" id="ntfyUrl" placeholder="https://ntfy.sh">
         </div>
+        <div id="pushTelegram" class="hidden">
+          <p class="muted">1. In Telegram open <a href="https://t.me/BotFather">@BotFather</a>, send <code>/newbot</code> and copy the bot token.<br>
+            2. Open your new bot and tap "Start".<br>
+            3. Paste the token here and tap "Connect".</p>
+          <p class="row"><input type="password" id="tgBot" placeholder="123456789:AA…" autocomplete="off"><button id="tgConnect">Connect</button></p>
+          <p class="muted" id="tgInfo"></p>
+        </div>
+        <div id="pushPushover" class="hidden">
+          <p class="muted">1. Install <a href="https://pushover.net">Pushover</a> (iPhone/Android, free 30-day trial, then a one-time purchase).<br>
+            2. Copy your user key from pushover.net.<span id="poTokenStep"><br>
+            3. Create an application at <a href="https://pushover.net/apps/build">pushover.net/apps/build</a> (name: WatchieTalkie2) and copy its API token.</span></p>
+          <label for="poUser">User key</label>
+          <input type="password" id="poUser" autocomplete="off">
+          <div id="poTokenBox"><label for="poToken">API token of your application</label>
+          <input type="password" id="poToken" autocomplete="off"></div>
+        </div>
+        <p class="muted hidden" id="pushAllow">Last step: in the Pebble app, allow notifications from this app, then test with "In 15 s" below and close the app on the watch.</p>
       </div>
       <h2>Test message</h2>
       <p class="muted">The server sends you a message in the chat "WatchieTalkie". "In 15 s": save, close the app on the watch and check the notification.</p>
@@ -245,21 +266,30 @@ function render() {
   $('notify').checked = me.cfg.notify !== false;
   $('beep').checked = me.cfg.beep !== false;
   $('timelineInfo').textContent = me.timeline
-    ? 'Registered for timeline notifications (works with the Rebble app, not with the new Pebble app – use ntfy below).'
-    : 'With the new Pebble app (Core) notifications need ntfy (below).';
-  const ntfyDefault = (me.server && me.server.ntfy) || '';
-  $('ntfyBox').classList.toggle('hidden', !ntfyDefault);
-  if (!$('ntfyOn').dataset.touched) {
-    $('ntfyOn').checked = !!me.cfg.ntfy;
+    ? 'Registered for timeline notifications (works with the Rebble app, not with the new Pebble app – see below).'
+    : 'With the new Pebble app (Core) this needs a phone notification (below).';
+  const srv = me.server || {};
+  $('push').querySelector('option[value=ntfy]').disabled = !srv.ntfy;
+  if (!$('push').dataset.touched) {
+    $('push').value = me.cfg.push !== undefined ? me.cfg.push : (me.cfg.ntfy ? 'ntfy' : '');
     $('ntfyTopic').value = me.cfg.ntfy || $('ntfyTopic').value;
     $('ntfyUrl').value = me.cfg.ntfyUrl || '';
+    $('poUser').value = me.cfg.poUser || '';
+    $('poToken').value = me.cfg.poToken || '';
   }
-  $('ntfyUrl').placeholder = ntfyDefault;
-  ntfyShow();
+  $('ntfyUrl').placeholder = srv.ntfy || 'https://ntfy.sh';
+  $('poTokenStep').classList.toggle('hidden', !!srv.pushoverToken);
+  $('poTokenBox').classList.toggle('hidden', !!srv.pushoverToken);
+  $('tgInfo').textContent = me.cfg.tgChat ? 'Connected \u2713 – to use another bot, paste its token and connect again.' : 'Not connected yet.';
+  pushShow();
 }
-function ntfyShow() {
-  if ($('ntfyOn').checked && !$('ntfyTopic').value) $('ntfyTopic').value = ntfyNewTopic();
-  $('ntfySetup').classList.toggle('hidden', !$('ntfyOn').checked);
+function pushShow() {
+  const v = $('push').value;
+  if (v === 'ntfy' && !$('ntfyTopic').value) $('ntfyTopic').value = ntfyNewTopic();
+  $('pushNtfy').classList.toggle('hidden', v !== 'ntfy');
+  $('pushTelegram').classList.toggle('hidden', v !== 'telegram');
+  $('pushPushover').classList.toggle('hidden', v !== 'pushover');
+  $('pushAllow').classList.toggle('hidden', !v);
   const srv = $('ntfyUrl').value.trim() || $('ntfyUrl').placeholder;
   $('ntfyServerHint').textContent = /^https:\/\/ntfy\.sh\/?$/.test(srv) ? '' : '(server: ' + srv + ')';
 }
@@ -323,7 +353,9 @@ $('groupBtn').onclick = async () => {
 const saveCfg = () => {
   const qr = $('qr').value.split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 10);
   return api('PUT', '/v1/me', { cfg: { qr, vibe: $('vibe').checked, notify: $('notify').checked, beep: $('beep').checked,
-    ntfy: $('ntfyOn').checked && !$('ntfyBox').classList.contains('hidden') ? $('ntfyTopic').value : '', ntfyUrl: $('ntfyUrl').value.trim() } });
+    push: $('push').value === 'telegram' && !(me && me.cfg.tgChat) ? '' : $('push').value,
+    ntfy: $('push').value === 'ntfy' ? $('ntfyTopic').value : (me && me.cfg.ntfy) || '', ntfyUrl: $('ntfyUrl').value.trim(),
+    poUser: $('poUser').value.trim(), poToken: $('poToken').value.trim() } });
 };
 const sendTest = (delay) => async () => {
   try { await saveCfg(); await api('POST', '/v1/test', { delay }); flash(delay ? 'Test message comes in ' + delay + ' s – close the app on the watch now' : 'Test message sent – look at your watch', true); } catch (e) { flash(e.message); }
@@ -331,8 +363,11 @@ const sendTest = (delay) => async () => {
 $('testNow').onclick = sendTest(0);
 $('testLater').onclick = sendTest(15);
 $('qr').oninput = () => { $('qr').dataset.touched = '1'; };
-$('ntfyOn').onchange = $('ntfyUrl').oninput = () => { $('ntfyOn').dataset.touched = '1'; ntfyShow(); };
-$('ntfyNew').onclick = () => { $('ntfyOn').dataset.touched = '1'; $('ntfyTopic').value = ntfyNewTopic(); };
+$('push').onchange = $('ntfyUrl').oninput = $('poUser').oninput = $('poToken').oninput = () => { $('push').dataset.touched = '1'; pushShow(); };
+$('ntfyNew').onclick = () => { $('push').dataset.touched = '1'; $('ntfyTopic').value = ntfyNewTopic(); };
+$('tgConnect').onclick = async () => {
+  try { await act('POST', '/v1/me/telegram', { bot: $('tgBot').value.trim() }, 'Telegram connected')(); $('tgBot').value = ''; } catch (e) { flash(e.message); }
+};
 $('ntfyCopy').onclick = () => {
   $('ntfyTopic').select();
   (navigator.clipboard ? navigator.clipboard.writeText($('ntfyTopic').value) : Promise.reject()).then(() => flash('Topic copied', true), () => document.execCommand('copy'));

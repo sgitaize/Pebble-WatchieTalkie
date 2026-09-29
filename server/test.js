@@ -176,8 +176,22 @@ async function main() {
   ok(r.status === 400, 'ntfy: http abgelehnt');
   r = await api('PUT', '/v1/me', { cfg: { ntfy: 'wt-abcdefghijkl', ntfyUrl: 'https://ntfy.example.org/' } }, tc);
   ok(r.status === 200 && r.body.cfg.ntfy === 'wt-abcdefghijkl' && r.body.cfg.ntfyUrl === 'https://ntfy.example.org', 'ntfy: Thema + Server gespeichert');
-  r = await api('PUT', '/v1/me', { cfg: { ntfy: '', ntfyUrl: '' } }, tc);
-  ok(r.status === 200 && r.body.cfg.ntfy === '' && r.body.cfg.ntfyUrl === '', 'ntfy: ausgeschaltet');
+  r = await api('PUT', '/v1/me', { cfg: { push: 'ntfy', ntfy: 'wt-abcdefghijkl' } }, tc);
+  ok(r.status === 200 && r.body.cfg.push === 'ntfy', 'Dienst ntfy gewählt');
+  r = await api('PUT', '/v1/me', { cfg: { push: 'sms' } }, tc);
+  ok(r.status === 400, 'unbekannter Dienst abgelehnt');
+  r = await api('PUT', '/v1/me', { cfg: { push: 'telegram' } }, tc);
+  ok(r.status === 400, 'Telegram ohne Verbindung abgelehnt');
+  r = await api('POST', '/v1/me/telegram', { bot: 'kaputt' }, tc);
+  ok(r.status === 400, 'Telegram: ungültiges Bot-Token abgelehnt');
+  r = await api('PUT', '/v1/me', { cfg: { push: 'pushover', poUser: 'x'.repeat(29) } }, tc);
+  ok(r.status === 400, 'Pushover: ungültiger Schlüssel abgelehnt');
+  r = await api('PUT', '/v1/me', { cfg: { push: 'pushover', poUser: 'u'.repeat(30) } }, tc);
+  ok(r.status === 400 && !r.body.server, 'Pushover ohne Anwendungstoken abgelehnt');
+  r = await api('PUT', '/v1/me', { cfg: { push: 'pushover', poUser: 'u'.repeat(30), poToken: 'a'.repeat(30) } }, tc);
+  ok(r.status === 200 && r.body.cfg.push === 'pushover' && r.body.cfg.poUser.length === 30, 'Pushover gespeichert');
+  r = await api('PUT', '/v1/me', { cfg: { push: '', ntfy: '', ntfyUrl: '', poUser: '', poToken: '' } }, tc);
+  ok(r.status === 200 && r.body.cfg.push === '' && r.body.cfg.ntfy === '' && r.body.cfg.ntfyUrl === '', 'Handy-Benachrichtigung ausgeschaltet');
 
   // Austritt, Kontakt entfernen, Konto löschen
   r = await api('DELETE', '/v1/groups/' + gid, null, tb);

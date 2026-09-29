@@ -15,6 +15,7 @@
  *   HISTORY_DAYS      Nachrichten älter als … Tage werden gelöscht (Standard 30)
  *   TIMELINE_API      Timeline-Dienst für Benachrichtigungen (Standard https://timeline-api.rebble.io, "off" = aus)
  *   NTFY_URL          vorgeschlagener ntfy-Server für Handy-Benachrichtigungen (Standard https://ntfy.sh, "off" = ntfy aus)
+ *   PUSHOVER_TOKEN    Pushover-Anwendungstoken des Servers (optional; sonst trägt jeder Nutzer sein eigenes ein)
  *   SERVER_NAME       Anzeigename des Servers (Standard "WatchieTalkie2")
  *   DONATE_URL        Spendenlink auf der Info-Seite (Standard: Projekt-Spendenlink, "off" = ausblenden)
  */
@@ -44,7 +45,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -55,6 +56,7 @@ const HISTORY_MAX = Math.min(500, Number(process.env.HISTORY_MAX) || 50);
 const HISTORY_DAYS = Number(process.env.HISTORY_DAYS) || 30;
 const TIMELINE_API = process.env.TIMELINE_API || 'https://timeline-api.rebble.io';
 const NTFY_URL = process.env.NTFY_URL || 'https://ntfy.sh';
+const PUSHOVER_TOKEN = process.env.PUSHOVER_TOKEN || '';
 const SERVER_NAME = (process.env.SERVER_NAME || 'WatchieTalkie2').slice(0, 40);
 const DONATE_URL = process.env.DONATE_URL === 'off' ? '' : (process.env.DONATE_URL || 'https://www.paypal.com/donate/?hosted_button_id=LGAZB9PR4YV5L');
 const POLL_WAIT_MAX = 25;      // Sekunden, die /v1/poll auf Neues wartet (Long-Polling spart Akku)
@@ -185,7 +187,7 @@ function cleanEnc(e, names) {
 function groupView(g) { return { id: g.id, title: g.title, owner: g.owner, members: g.members.slice(), invited: g.invited.slice() }; }
 function serverInfo() {
   return { donate: DONATE_URL, name: SERVER_NAME, version: VERSION, registration: REGISTER_CODE ? 'code' : 'open', historyMax: HISTORY_MAX, historyDays: HISTORY_DAYS, textMax: TEXT_MAX,
-    ntfy: NTFY_URL === 'off' ? '' : NTFY_URL };
+    ntfy: NTFY_URL === 'off' ? '' : NTFY_URL, pushoverToken: !!PUSHOVER_TOKEN };
 }
 
 /* Nachricht speichern und Empfänger benachrichtigen */
@@ -216,29 +218,57 @@ function pushBudget() {                        // Notbremse gegen Fluten: höchs
   pushesSent.push(t);
   return true;
 }
-/* Benachrichtigung bei geschlossener App: Timeline-Pin (Rebble-App) und/oder ntfy (Handy-Benachrichtigung).
-   Die Core-App holt keine Timeline-Pins vom Server ab – dort hilft nur ntfy. */
+/* Benachrichtigung bei geschlossener App: Timeline-Pin (nur Rebble-App) und/oder Handy-Benachrichtigung
+   (ntfy, Telegram-Bot oder Pushover – der Nutzer wählt in den Einstellungen). Die Core-App holt keine
+   Timeline-Pins vom Server ab. Inhalt immer nur „New message: <Absender>“, nie der Nachrichtentext. */
 function notifyClosed(r, u, a, msg) {
   if (r.cfg.notify === false) return;
   const title = a.group ? a.group.title + ': ' + u.name : u.name;
   if (r.tl) pushPin(r, title, msg);
-  if (r.cfg.ntfy && NTFY_URL !== 'off') pushNtfy(r, title);
+  const c = r.cfg, text = 'New message: ' + title;
+  const push = c.push !== undefined ? c.push : (c.ntfy ? 'ntfy' : '');   // Konten aus 1.3.0 kannten nur ntfy
+  if (push === 'ntfy' && c.ntfy && NTFY_URL !== 'off')
+    httpsPost('ntfy', r, (c.ntfyUrl || NTFY_URL) + '/' + c.ntfy, text,
+      { 'Content-Type': 'text/plain; charset=utf-8', Title: 'WatchieTalkie2', Tags: 'speech_balloon' });
+  else if (push === 'telegram' && c.tgBot && c.tgChat)
+    httpsPost('Telegram', r, 'https://api.telegram.org/bot' + c.tgBot + '/sendMessage',
+      JSON.stringify({ chat_id: c.tgChat, text: '\ud83d\udcac WatchieTalkie2 \u2013 ' + text }), { 'Content-Type': 'application/json' });
+  else if (push === 'pushover' && c.poUser && (c.poToken || PUSHOVER_TOKEN))
+    httpsPost('Pushover', r, 'https://api.pushover.net/1/messages.json',
+      new URLSearchParams({ token: c.poToken || PUSHOVER_TOKEN, user: c.poUser, title: 'WatchieTalkie2', message: text }).toString(),
+      { 'Content-Type': 'application/x-www-form-urlencoded' });
 }
-function pushNtfy(r, title) {
+function httpsPost(what, r, url, body, headers) {
   if (!pushBudget()) return;
-  const body = 'New message: ' + title;
   try {
-    const url = new URL((r.cfg.ntfyUrl || NTFY_URL).replace(/\/$/, '') + '/' + r.cfg.ntfy);
-    const req = https.request(url, { method: 'POST', timeout: 10000,
-      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': Buffer.byteLength(body),
-        Title: 'WatchieTalkie2', Tags: 'speech_balloon' } }, (res) => {
+    const req = https.request(new URL(url), { method: 'POST', timeout: 10000,
+      headers: Object.assign({ 'Content-Length': Buffer.byteLength(body) }, headers) }, (res) => {
       res.resume();
-      if (res.statusCode >= 300) console.error('ntfy', res.statusCode, 'für', r.name);
+      if (res.statusCode >= 300) console.error(what, res.statusCode, 'für', r.name);
     });
-    req.on('error', (e) => console.error('ntfy', e.message));
+    req.on('error', (e) => console.error(what, e.message));
     req.on('timeout', () => req.destroy());
     req.end(body);
-  } catch (e) { console.error('ntfy', e.message); }
+  } catch (e) { console.error(what, e.message); }
+}
+/* Telegram: Chat-ID aus der letzten Nachricht an den eigenen Bot holen (Nutzer schreibt dem Bot vorher „/start“) */
+function telegramChat(bot) {
+  return new Promise((resolve) => {
+    const req = https.get('https://api.telegram.org/bot' + bot + '/getUpdates?limit=20', { timeout: 10000 }, (res) => {
+      let d = ''; res.setEncoding('utf8');
+      res.on('data', (x) => { if (d.length < 200000) d += x; });
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(d);
+          if (!j.ok) return resolve({ error: 'bot' });
+          const m = j.result.map((x) => x.message || x.edited_message).filter((x) => x && x.chat).pop();
+          resolve(m ? { chat: String(m.chat.id) } : { error: 'nochat' });
+        } catch (e) { resolve({ error: 'bot' }); }
+      });
+    });
+    req.on('error', () => resolve({ error: 'net' }));
+    req.on('timeout', () => req.destroy());
+  });
 }
 function pushPin(r, title, msg) {
   if (TIMELINE_API === 'off' || !pushBudget()) return;
@@ -346,6 +376,21 @@ route('PUT', /^\/v1\/me$/, true, (req, b, u) => {
     if (typeof c.vibe === 'boolean') u.cfg.vibe = c.vibe;
     if (typeof c.notify === 'boolean') u.cfg.notify = c.notify;
     if (typeof c.beep === 'boolean') u.cfg.beep = c.beep;
+    if (typeof c.push === 'string') {
+      if (!['', 'ntfy', 'telegram', 'pushover'].includes(c.push)) fail(400, 'Unbekannter Benachrichtigungsdienst');
+      u.cfg.push = c.push;
+    }
+    if (typeof c.poUser === 'string') {         // Pushover: Nutzerschlüssel + (falls der Server keinen hat) Anwendungstoken
+      if (c.poUser && !/^[A-Za-z0-9]{30}$/.test(c.poUser)) fail(400, 'Ungültiger Pushover-Nutzerschlüssel (30 Zeichen)');
+      u.cfg.poUser = c.poUser;
+    }
+    if (typeof c.poToken === 'string') {
+      if (c.poToken && !/^[A-Za-z0-9]{30}$/.test(c.poToken)) fail(400, 'Ungültiges Pushover-Anwendungstoken (30 Zeichen)');
+      u.cfg.poToken = c.poToken;
+    }
+    if (c.push === 'pushover' && (!u.cfg.poUser || (!u.cfg.poToken && !PUSHOVER_TOKEN))) fail(400, 'Pushover: Schlüssel fehlt');
+    if (c.push === 'telegram' && !u.cfg.tgChat) fail(400, 'Telegram: erst verbinden');
+    if (c.push === 'ntfy' && !(typeof c.ntfy === 'string' ? c.ntfy : u.cfg.ntfy)) fail(400, 'ntfy: Thema fehlt');
     if (typeof c.ntfy === 'string') {           // ntfy-Thema (wie ein Passwort: wer es kennt, liest mit); leer = aus
       if (c.ntfy && !/^[A-Za-z0-9_-]{12,64}$/.test(c.ntfy)) fail(400, 'Ungültiges ntfy-Thema (12–64 Zeichen A–Z, 0–9, _ -)');
       u.cfg.ntfy = c.ntfy;
@@ -370,6 +415,22 @@ route('PUT', /^\/v1\/me$/, true, (req, b, u) => {
     if (!B64.test(b.pubKey) || b.pubKey.length !== 44) fail(400, 'Ungültiger öffentlicher Schlüssel');
     if (b.pubKey !== u.pk) { u.pk = b.pubKey; u.pkTs = now(); }
   }
+  save();
+  return meView(u);
+});
+
+/* Telegram verbinden: eigener Bot (Token von @BotFather), Chat-ID holt der Server über getUpdates.
+   {bot: ''} trennt die Verbindung. */
+route('POST', /^\/v1\/me\/telegram$/, true, async (req, b, u) => {
+  if (limited('tg:' + u.name, 10, 600000)) fail(429, 'Zu viele Versuche, bitte später');
+  const bot = typeof b.bot === 'string' ? b.bot.trim() : '';
+  if (!bot) { u.cfg.tgBot = ''; u.cfg.tgChat = ''; if (u.cfg.push === 'telegram') u.cfg.push = ''; save(); return meView(u); }
+  if (!/^\d{5,15}:[A-Za-z0-9_-]{30,50}$/.test(bot)) fail(400, 'Ungültiges Bot-Token');
+  const r = await telegramChat(bot);
+  if (r.error === 'bot') fail(400, 'Telegram kennt dieses Bot-Token nicht');
+  if (r.error === 'nochat') fail(400, 'Schreib deinem Bot zuerst /start in Telegram');
+  if (r.error) fail(502, 'Telegram nicht erreichbar');
+  u.cfg.tgBot = bot; u.cfg.tgChat = r.chat; u.cfg.push = 'telegram';
   save();
   return meView(u);
 });
@@ -593,7 +654,14 @@ route('GET', /^\/v1\/poll$/, true, (req, b, u, m, q) => {
 const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/impressum.html': 'impressum.html', '/favicon.svg': 'favicon.svg', '/icon.svg': 'icon.svg' };
 const TYPES = { html: 'text/html; charset=utf-8', svg: 'image/svg+xml' };
 /* Fehlermeldungen auf Englisch, wenn der Client nicht Deutsch spricht (Accept-Language) */
-const EN_ERR = { 'Chat nicht gefunden': 'Chat not found', 'Dieser Chat ist schreibgeschützt': 'This chat is read-only', 'Das bist du selbst': 'That is you', 'Dieser Name ist reserviert': 'This name is reserved',
+const EN_ERR = { 'Ungültiges ntfy-Thema (12–64 Zeichen A–Z, 0–9, _ -)': 'Invalid ntfy topic (12–64 characters A–Z, 0–9, _ -)',
+  'Ungültiger ntfy-Server (https://…)': 'Invalid ntfy server (https://…)', 'ntfy: Thema fehlt': 'ntfy: topic missing',
+  'Unbekannter Benachrichtigungsdienst': 'Unknown notification service', 'Telegram: erst verbinden': 'Telegram: connect first',
+  'Ungültiger Pushover-Nutzerschlüssel (30 Zeichen)': 'Invalid Pushover user key (30 characters)',
+  'Ungültiges Pushover-Anwendungstoken (30 Zeichen)': 'Invalid Pushover API token (30 characters)', 'Pushover: Schlüssel fehlt': 'Pushover: user key or API token missing',
+  'Ungültiges Bot-Token': 'Invalid bot token', 'Telegram kennt dieses Bot-Token nicht': 'Telegram does not know this bot token',
+  'Schreib deinem Bot zuerst /start in Telegram': 'Send /start to your bot in Telegram first', 'Telegram nicht erreichbar': 'Telegram not reachable',
+  'Zu viele Versuche, bitte später': 'Too many attempts, please try later', 'Chat nicht gefunden': 'Chat not found', 'Dieser Chat ist schreibgeschützt': 'This chat is read-only', 'Das bist du selbst': 'That is you', 'Dieser Name ist reserviert': 'This name is reserved',
   'Du hast diesen Nutzer blockiert': 'You blocked this user', 'Gruppe ist voll': 'Group is full', 'Gruppe nicht gefunden': 'Group not found',
   'Gruppenname fehlt': 'Group name missing', 'Kein Mitglied': 'Not a member', 'Keine Einladung': 'No invitation',
   'Nachricht muss verschlüsselt sein – bitte App aktualisieren': 'Message must be encrypted – please update the app',
@@ -659,7 +727,7 @@ function handleReq(req, res) {
         if (now() - u.seen > 60000) { u.seen = now(); save(); }
       }
       const out = r.fn(req, body, u, r.re.exec(p), url.searchParams);
-      if (out && typeof out.then === 'function') out.then((x) => { if (!res.writableEnded && !res.destroyed) send(res, 200, x); }).catch((e) => { console.error('Fehler', p, e); if (!res.writableEnded) send(res, 500, { error: 'Serverfehler' }); });
+      if (out && typeof out.then === 'function') out.then((x) => { if (!res.writableEnded && !res.destroyed) send(res, 200, x); }).catch((e) => { if (res.writableEnded) return; if (e instanceof ApiError) return send(res, e.status, { error: e.message }); console.error('Fehler', p, e); send(res, 500, { error: 'Serverfehler' }); });
       else send(res, 200, out);
     } catch (e) {
       if (e instanceof ApiError) return send(res, e.status, { error: e.message });
