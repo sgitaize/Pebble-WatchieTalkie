@@ -561,19 +561,22 @@ static void inbox(DictionaryIterator *it, void *ctx) {
   int cmd = num(it, MESSAGE_KEY_CMD), idx = num(it, MESSAGE_KEY_IDX), count = num(it, MESSAGE_KEY_COUNT);
   s_rx++;
   switch (cmd) {
-    case C_LIST_ITEM:
-      if (idx == 0) s_chat_count = 0;
-      if (count == 0) s_chat_count = 0;
-      else if (idx < MAX_CHATS && idx == s_chat_count) {
-        Chat *c = &s_chats[s_chat_count++];
+    case C_LIST_ITEM: {
+      /* Erst nach dem letzten Eintrag übernehmen – sonst springt die Markierung beim Nachladen (neue Nachricht) */
+      static int s_load_n;
+      if (idx == 0) s_load_n = 0;
+      if (count == 0) { s_chat_count = 0; main_reload(); break; }
+      if (idx < MAX_CHATS && idx == s_load_n) {
+        Chat *c = &s_chats[s_load_n++];
         copy(c->id, sizeof(c->id), str(it, MESSAGE_KEY_CHAT));
         copy(c->title, sizeof(c->title), str(it, MESSAGE_KEY_TITLE));
         copy(c->preview, sizeof(c->preview), str(it, MESSAGE_KEY_TEXT));
         c->unread = num(it, MESSAGE_KEY_UNREAD);
         c->kind = num(it, MESSAGE_KEY_KIND);
       }
-      main_reload();
+      if (idx == count - 1 || idx == MAX_CHATS - 1) { s_chat_count = s_load_n; main_reload(); }
       break;
+    }
     case C_MSG_ITEM:
       if (strcmp(str(it, MESSAGE_KEY_CHAT), s_open_chat) != 0) break;
       if (idx == 0) msgs_clear();
