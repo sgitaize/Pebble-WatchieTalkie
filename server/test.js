@@ -200,8 +200,32 @@ async function main() {
   ok(!r.body.contacts.includes(A), 'Kontakt entfernt');
   r = await api('GET', '/v1/me', null, ta);
   ok(!r.body.contacts.includes(B), 'Kontakt beidseitig entfernt');
+
+  // Zweitnamen: Einladung an den Zweitnamen landet beim Hauptkonto
+  const X = 'tx_' + sfx;
+  r = await api('POST', '/v1/me/aliases', { name: X }, ta);
+  ok(r.status === 200 && r.body.aliases.includes(X), 'Zweitname angelegt');
+  ok((await api('POST', '/v1/me/aliases', { name: B }, ta)).status === 409, 'Zweitname = fremder Name abgelehnt');
+  ok((await api('POST', '/v1/me/aliases', { name: X }, tb)).status === 409, 'Zweitname doppelt abgelehnt');
+  ok((await api('POST', '/v1/me/aliases', { name: 'admin' }, ta)).status === 400, 'reservierter Zweitname abgelehnt');
+  ok((await api('POST', '/v1/register', { name: X, test: true })).status === 409, 'Registrierung mit Zweitname abgelehnt');
+  await api('POST', '/v1/contacts', { name: X }, tb);
+  r = await api('GET', '/v1/me', null, ta);
+  ok(r.body.invitesIn.includes(B), 'Einladung an Zweitname kommt beim Hauptkonto an');
+  r = await api('POST', '/v1/contacts/' + B + '/accept', null, ta);
+  ok(r.body.contacts.includes(B), 'Einladung über Zweitname angenommen');
+  r = await api('GET', '/v1/me', null, tb);
+  ok(r.body.contacts.includes(A) && !r.body.contacts.includes(X), 'Kontakt sieht Hauptnamen');
+  await api('DELETE', '/v1/contacts/' + A, null, tb);
+  r = await api('DELETE', '/v1/me/aliases/' + X, null, ta);
+  ok(r.status === 200 && !r.body.aliases.includes(X), 'Zweitname entfernt');
+  ok((await api('POST', '/v1/contacts', { name: X }, tb)).status === 404, 'entfernter Zweitname nicht mehr erreichbar');
+  await api('POST', '/v1/me/aliases', { name: X }, ta);
   for (const t of [ta, tb, tc]) ok((await api('DELETE', '/v1/me', null, t)).status === 200, 'Konto gelöscht');
   ok((await api('GET', '/v1/me', null, ta)).status === 401, 'Token nach Löschung ungültig');
+  r = await api('POST', '/v1/register', { name: X, test: true });
+  ok(r.status === 200, 'Zweitname nach Kontolöschung wieder frei');
+  if (r.body && r.body.token) await api('DELETE', '/v1/me', null, r.body.token);
 
   // CORS + Robustheit
   const pre = await fetch(base + '/v1/me', { method: 'OPTIONS' });

@@ -8,7 +8,7 @@ WatchieTalkie2 ist eine **Weiterführung des früheren [Watchie-Talkie](https://
 
 - **Sprache → Text** über die Diktierfunktion der Pebble (Uhren mit Mikrofon)
 - **Schnellantworten** (frei einstellbar, auch für Uhren ohne Mikrofon)
-- **Benutzernamen, Einladungen, Blockieren**
+- **Benutzernamen, Einladungen, Blockieren** – bis zu 3 Zweitnamen je Konto (z. B. Entwickler- und Privatname; Einladungen an einen Zweitnamen landen beim Hauptkonto, der Kontakt sieht danach den Hauptnamen)
 - **Direktchats und Gruppen** (bis 20 Mitglieder)
 - **Chat-Historie:** letzte 50 Nachrichten je Chat, höchstens 30 Tage
 - **Ende-zu-Ende-Verschlüsselung:** der Server-Betreiber kann Nachrichten nicht lesen
@@ -116,6 +116,7 @@ JSON, Anmeldung mit `Authorization: Bearer <Geräte-Token>`. Chat-IDs: `u.<name>
 | GET | `/v1/stats` | öffentliche Zähler: Nutzer, Gruppen, Nachrichten, davon diktiert |
 | POST | `/v1/register` | `{name, code?}` → `{name, token}` |
 | GET / PUT / DELETE | `/v1/me` | Profil, Einstellungen (`cfg`, u. a. `push` = `''`/`ntfy`/`telegram`/`pushover`, `ntfy`, `ntfyUrl`, `poUser`, `poToken`), `pubKey`, `timelineToken`, Konto löschen |
+| POST · DELETE | `/v1/me/aliases` · `/v1/me/aliases/:name` | `{name}` Zweitname anlegen (max. 3) / entfernen |
 | GET | `/v1/keys` | öffentliche Schlüssel von Kontakten und Gruppenmitgliedern |
 | POST | `/v1/contacts` | `{name}` einladen (nimmt an, wenn der andere schon eingeladen hat) |
 | POST | `/v1/contacts/:name/accept` | Einladung annehmen |

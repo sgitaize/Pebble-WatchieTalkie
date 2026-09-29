@@ -59,6 +59,11 @@
     <section>
       <h2>Account</h2>
       <p><span>Logged in as</span> <b id="meName"></b></p>
+      <details id="aliasDetails"><summary class="muted">Other names (aliases)</summary>
+        <p class="muted">Be reachable under up to 3 more names, e.g. a developer name and a private one. Invitations to an alias arrive here; once accepted, your contact sees your main name.</p>
+        <ul id="aliases"></ul>
+        <div class="row"><input type="text" id="aliasName" autocapitalize="none" autocomplete="off" maxlength="16"><button id="aliasBtn">Add</button></div>
+      </details>
       <details><summary class="muted">Show transfer code (for a new phone)</summary>
         <p class="muted">Contains your login and your secret key. Anyone who knows it can read your messages and write in your name – never share it.</p><code id="tokenOut"></code>
       </details>
@@ -235,6 +240,7 @@ function render() {
     const b = document.createElement('button'); b.className = 'small'; b.textContent = 'Checked';
     b.onclick = () => { ackChanged = true; render(); }; $('changedBox').appendChild(b);
   }
+  fill('aliases', me.aliases || [], (n) => li(n, [['Remove', async () => { if (confirm(n + ': remove? Anyone can register this name afterwards.')) await act('DELETE', '/v1/me/aliases/' + n)(); }]]), 'No aliases yet.');
   fill('invitesIn', me.invitesIn, (n) => li(n, [['Accept', act('POST', '/v1/contacts/' + n + '/accept', null, n + ' is now your contact')],
     ['Decline', act('DELETE', '/v1/contacts/' + n)], ['Block', act('POST', '/v1/blocks', { name: n }), 'bad']]));
   fill('contacts', me.contacts, (n) => li(n, [['Remove', async () => { if (confirm(n + ': remove? The chat disappears for both of you.')) await act('DELETE', '/v1/contacts/' + n)(); }],
@@ -345,6 +351,11 @@ $('inviteBtn').onclick = async () => {
   if (!n) return;
   try { await act('POST', '/v1/contacts', { name: n })(); $('inviteName').value = '';
     flash(me.contacts.includes(n) ? n + ' is now your contact' : 'Invitation sent to ' + n + '', true); } catch (e) { flash(e.message); }
+};
+$('aliasBtn').onclick = async () => {
+  const n = $('aliasName').value.trim().toLowerCase();
+  if (!n) return;
+  try { await act('POST', '/v1/me/aliases', { name: n }, 'You can now also be reached as ' + n)(); $('aliasName').value = ''; } catch (e) { flash(e.message); }
 };
 $('groupBtn').onclick = async () => {
   const members = [...$('groupMembers').querySelectorAll('input:checked')].map((x) => x.value);

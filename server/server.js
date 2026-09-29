@@ -45,7 +45,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -65,6 +65,7 @@ const TEXT_MAX = 300;          // Zeichen je Nachricht
 const GROUP_MAX = 20;          // Mitglieder je Gruppe
 const GROUPS_PER_USER = 20;
 const CONTACTS_MAX = 200;
+const ALIASES_MAX = 3;                // Zweitnamen je Konto (Einladungen an einen Zweitnamen landen beim Hauptkonto)
 const BODY_MAX = 32768;
 const NAME_RE = /^[a-z0-9][a-z0-9_]{2,15}$/;
 const RESERVED = new Set(['admin', 'administrator', 'root', 'system', 'support', 'server', 'watchietalkie', 'watchietalkie2', 'psst', 'pebble', 'rebble',
@@ -88,7 +89,11 @@ function loadDb() {
 }
 let db = loadDb();
 const byToken = new Map();            // Token-Hash → Name
-function reindex() { byToken.clear(); for (const n in db.users) byToken.set(db.users[n].th, n); }
+const byAlias = new Map();            // Zweitname → Hauptname
+function reindex() {
+  byToken.clear(); byAlias.clear();
+  for (const n in db.users) { byToken.set(db.users[n].th, n); for (const a of db.users[n].aliases || []) byAlias.set(a, n); }
+}
 reindex();
 let saveTimer = null;
 function save() {
@@ -163,7 +168,7 @@ function chatList(u) {
 function meView(u) {
   const c = { ok: [], out: [], in: [] };
   for (const n in u.contacts) c[u.contacts[n]].push(n);
-  return { name: u.name, cfg: u.cfg, contacts: c.ok.sort(), invitesOut: c.out.sort(), invitesIn: c.in.sort(), blocked: u.blocked.slice().sort(),
+  return { name: u.name, aliases: (u.aliases || []).slice(), cfg: u.cfg, contacts: c.ok.sort(), invitesOut: c.out.sort(), invitesIn: c.in.sort(), blocked: u.blocked.slice().sort(),
     groups: u.groups.filter((g) => db.groups[g]).map((g) => groupView(db.groups[g])),
     groupInvites: u.ginv.filter((g) => db.groups[g]).map((g) => groupView(db.groups[g])),
     timeline: !!u.tl, pubKey: u.pk || '', server: serverInfo() };
@@ -344,7 +349,10 @@ function needName(n) {
   if (!NAME_RE.test(n)) fail(400, 'Ungültiger Name (3–16 Zeichen: a–z, 0–9, _)');
   return n;
 }
-function otherUser(n) { const r = db.users[needName(n)]; if (!r) fail(404, 'Nutzer nicht gefunden'); return r; }
+/* Name oder Zweitname → Konto */
+function userByName(n) { return db.users[n] || db.users[byAlias.get(n)] || null; }
+const nameTaken = (n) => RESERVED.has(n) || !!db.users[n] || byAlias.has(n);
+function otherUser(n) { const r = userByName(needName(n)); if (!r) fail(404, 'Nutzer nicht gefunden'); return r; }
 function unlinkContact(a, b) { delete a.contacts[b.name]; delete b.contacts[a.name]; }
 
 const routes = [];
@@ -357,7 +365,7 @@ route('POST', /^\/v1\/register$/, false, (req, b) => {
   if (REGISTER_CODE && String(b.code || '') !== REGISTER_CODE) fail(403, 'Registrierungscode falsch');
   const name = needName(b.name);
   if (RESERVED.has(name)) fail(400, 'Dieser Name ist reserviert');
-  if (db.users[name]) fail(409, 'Name schon vergeben');
+  if (nameTaken(name)) fail(409, 'Name schon vergeben');
   if (Object.keys(db.users).length >= MAX_USERS) fail(403, 'Server ist voll');
   const token = crypto.randomBytes(32).toString('hex');
   db.users[name] = newUser(name, token);
@@ -441,9 +449,31 @@ route('DELETE', /^\/v1\/me$/, true, (req, b, u) => {
   for (const k in db.chats) if (k.startsWith('d:') && k.slice(2).split('|').includes(u.name)) delete db.chats[k];
   delete db.chats[sysKey(u.name)];
   byToken.delete(u.th);
+  for (const a of u.aliases || []) byAlias.delete(a);
   delete db.users[u.name];
   save();
   return { ok: true };
+});
+
+/* Zweitnamen: unter weiteren Namen erreichbar sein (z. B. Entwickler- und Privatname); Kontakte sehen danach den Hauptnamen */
+route('POST', /^\/v1\/me\/aliases$/, true, (req, b, u) => {
+  const name = needName(b.name);
+  if (RESERVED.has(name)) fail(400, 'Dieser Name ist reserviert');
+  if (name === u.name || (u.aliases || []).includes(name)) return meView(u);
+  if (nameTaken(name)) fail(409, 'Name schon vergeben');
+  if ((u.aliases || []).length >= ALIASES_MAX) fail(400, 'Zu viele Zweitnamen');
+  if (limited('alias:' + u.name, 10, 3600000)) fail(429, 'Zu viele Versuche, bitte später');
+  u.aliases = (u.aliases || []).concat(name);
+  byAlias.set(name, u.name);
+  save();
+  return meView(u);
+});
+route('DELETE', /^\/v1\/me\/aliases\/([a-z0-9_]{3,16})$/, true, (req, b, u, m) => {
+  if (!(u.aliases || []).includes(m[1])) fail(404, 'Nicht gefunden');
+  u.aliases = u.aliases.filter((x) => x !== m[1]);
+  byAlias.delete(m[1]);
+  save();
+  return meView(u);
 });
 
 /* Kontakte: Einladung schicken; hat der andere mich schon eingeladen, ist es damit angenommen */
@@ -670,7 +700,7 @@ const EN_ERR = { 'Ungültiges ntfy-Thema (12–64 Zeichen A–Z, 0–9, _ -)': '
   'Server ist voll': 'Server is full', 'Ungültige verschlüsselte Nachricht': 'Invalid encrypted message',
   'Ungültiger Name (3–16 Zeichen: a–z, 0–9, _)': 'Invalid name (3–16 characters: a–z, 0–9, _)', 'Ungültiger öffentlicher Schlüssel': 'Invalid public key',
   'Ungültiges JSON': 'Invalid JSON', 'Zu viele Einladungen, bitte später': 'Too many invitations, please try later', 'Zu viele Gruppen': 'Too many groups',
-  'Zu viele Kontakte': 'Too many contacts', 'Zu viele Nachrichten, bitte kurz warten': 'Too many messages, please wait a moment',
+  'Zu viele Kontakte': 'Too many contacts', 'Zu viele Zweitnamen': 'Too many aliases', 'Zu viele Nachrichten, bitte kurz warten': 'Too many messages, please wait a moment',
   'Zu viele Registrierungen, bitte später': 'Too many registrations, please try later', 'Zu viele neue Gruppen, bitte später': 'Too many new groups, please try later',
   'Ungültige Adresse': 'Invalid address', 'Nicht gefunden': 'Not found', 'Zu viele Anfragen': 'Too many requests', 'Zu groß': 'Too large', 'Serverfehler': 'Server error' };
 function english(msg) {
