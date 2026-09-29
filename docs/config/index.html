@@ -156,7 +156,7 @@
   <p class="muted">Use at your own risk, without any guarantee of availability or delivery. Users are responsible for their content. A free hobby continuation of the former Watchie-Talkie (offline).</p>
   <p class="muted"><a id="impressum" href="#">Imprint, privacy &amp; liability of the server</a> · <a href="https://github.com/sgitaize/Pebble-WatchieTalkie">Open source on GitHub</a></p>
 </main>
-<footer><div class="row"><button class="main" id="saveBtn">Save &amp; back to watch</button></div></footer>
+<footer><div class="row"><button id="reloadBtn" title="Reload page (fetch the latest version)" aria-label="Reload page">&#x21bb;</button><button class="main" id="saveBtn">Save &amp; back to watch</button></div></footer>
 
 <script src="nacl.min.js"></script>
 <script>
@@ -172,6 +172,11 @@ let token = init.token || '';
 let me = null;
 /* Hash sofort aus der Adresszeile/Verlauf entfernen (enthält Token und Schlüssel) */
 try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* egal */ }
+/* Neu laden am Cache vorbei: neuer ?v= erzwingt frisches HTML; Daten der Uhr (Hash) samt frisch angelegtem Konto/Schlüssel werden mitgegeben, andere ungespeicherte Änderungen gehen verloren */
+$('reloadBtn').onclick = () => {
+  const q = new URLSearchParams(location.search); q.set('v', Date.now().toString(36));
+  location.replace(location.pathname + '?' + q + '#' + encodeURIComponent(JSON.stringify(Object.assign({}, init, { server, token, sk, hasKey: !!sk }))));
+};
 /* Schlüssel: vorhandenen vom Handy übernehmen, sonst neu erzeugen; Seed jedes Mal frisch (Browser-Zufall) */
 const b64 = (u) => btoa(String.fromCharCode.apply(null, u));
 const unb64 = (s) => { try { return Uint8Array.from(atob(s), (c) => c.charCodeAt(0)); } catch (e) { return null; } };
