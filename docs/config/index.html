@@ -304,7 +304,7 @@ async function loadServer() {
   try {
     const i = await api('GET', '/v1/info');
     $('serverInfo').textContent = i.name + ' ' + i.version + ' · registration ' + (i.registration === 'open' ? 'open' : 'code only') +
-      ' · up to ' + i.historyMax + ' messages per chat, ' + i.historyDays + ' days';
+      ' · chat history: the last ' + i.historyMax + ' messages per chat are kept for ' + i.historyDays + ' days';
     $('regCodeBox').classList.toggle('hidden', i.registration !== 'code');
   } catch (e) { $('serverInfo').textContent = e.message; }
   me = null;
