@@ -21,6 +21,8 @@ Why an extra app? A watch app cannot listen for messages while it is closed, and
 
 Beta: use at your own risk, no guarantee of availability or delivery. Not for emergencies.
 
+Ideas, feature requests and bug reports are very welcome: https://github.com/sgitaize/Pebble-WatchieTalkie/issues
+
 Source code & self-hosting: https://github.com/sgitaize/Pebble-WatchieTalkie
 
 Like it? Buy me a Spezi 🥤 to support the server and hosting: https://www.paypal.com/donate/?hosted_button_id=LGAZB9PR4YV5L
