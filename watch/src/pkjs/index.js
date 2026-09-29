@@ -8,7 +8,7 @@ E2E.init({ get: function (k) { return localStorage.getItem(k); }, set: function 
 var DEFAULT_SERVER = 'https://watchietalkie.aize-it.de';
 var CONFIG_URL = 'https://sgitaize.github.io/Pebble-WatchieTalkie/config/';
 var C = { LIST_ITEM: 2, MSG_ITEM: 5, NEW_MSG: 7, QR_ITEM: 8, STATUS: 9, SENT: 10,
-  READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25, SEND_VOICE: 26, TEST: 27, BEEP: 28, DELETE: 29, PAUSE: 30, PUSH: 11 };
+  READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25, SEND_VOICE: 26, TEST: 27, BEEP: 28, DELETE: 29, PAUSE: 30, PUSH: 11, LOOK: 12 };
 var SYS_CID = 'u.watchietalkie';     // System-Chat des Servers (Testnachrichten, nur lesbar)
 var K = { CHAT: 0, CONTACT_INVITE: 1, GROUP_INVITE: 2 };
 
@@ -110,6 +110,21 @@ function sendPush() {
   var c = (me && me.cfg) || {};
   var push = c.push !== undefined ? c.push : (c.ntfy ? 'ntfy' : '');
   toWatch({ CMD: C.PUSH, FLAGS: push && c.notify !== false ? 1 : 0, IDX: (me && me.pauseLeft) || 0, COUNT: c.pauseMin || 15 });
+}
+/* Aussehen auf der Uhr (nur auf diesem Handy gespeichert): Schriftgröße 0–2, Farben '#RRGGBB', Licht an */
+function getLook() {
+  var l = {}; try { l = JSON.parse(localStorage.getItem('wt.look') || '{}') || {}; } catch (e) { l = {}; }
+  var hex = /^#[0-9a-f]{6}$/i;
+  return { font: [0, 1, 2].indexOf(l.font) >= 0 ? l.font : 0, bg: hex.test(l.bg) ? l.bg : '#FFFFFF',
+    fg: hex.test(l.fg) ? l.fg : '#000000', light: l.light === true };
+}
+function gcolor(hex) {   // '#RRGGBB' → GColor8 (2 Bit je Kanal)
+  var n = parseInt(hex.slice(1), 16);
+  return 0xC0 | ((n >> 22) & 3) << 4 | ((n >> 14) & 3) << 2 | ((n >> 6) & 3);
+}
+function sendLook() {
+  var l = getLook();
+  toWatch({ CMD: C.LOOK, IDX: l.font, COUNT: gcolor(l.bg) << 8 | gcolor(l.fg), FLAGS: l.light ? 1 : 0 });
 }
 /* Handy-Benachrichtigungen pausieren/fortsetzen (Menü auf der Uhr) */
 function setPause(on) {
@@ -334,6 +349,7 @@ function registerTimeline() {
 
 /* ---------------------------------------------------------------- Ereignisse -- */
 Pebble.addEventListener('ready', function () {
+  sendLook();
   loadChats();
   registerTimeline();
   schedulePoll();
@@ -359,7 +375,7 @@ Pebble.addEventListener('showConfiguration', function () {
   try { pins = JSON.parse(localStorage.getItem('wt.pins') || '{}'); } catch (e) { pins = {}; }
   for (var n in pins) fps[n] = E2E.fingerprint(pins[n]);
   var data = { server: server, token: token, platform: platform(), hasKey: E2E.ready(), sk: localStorage.getItem('wt.sk') || '',
-    fp: E2E.ready() ? E2E.fingerprint(E2E.publicKey()) : '', fps: fps, changed: changedList() };
+    fp: E2E.ready() ? E2E.fingerprint(E2E.publicKey()) : '', fps: fps, changed: changedList(), look: getLook() };
   Pebble.openURL(CONFIG_URL + '?v=' + Date.now() + '#' + encodeURIComponent(JSON.stringify(data)));
 });
 
@@ -372,6 +388,7 @@ Pebble.addEventListener('webviewclosed', function (e) {
   if (typeof d.token === 'string' && (d.token === '' || /^[a-f0-9]{64}$/.test(d.token))) { token = d.token; localStorage.setItem('wt.token', token); }
   if (typeof d.sk === 'string' && d.sk) E2E.setKeys(d.sk, d.seed || '');
   if (d.ackChanged) localStorage.removeItem('wt.changed');
+  if (d.look && typeof d.look === 'object') { localStorage.setItem('wt.look', JSON.stringify(d.look)); sendLook(); }
   seq = -1; me = null; listOk = false;
   loadChats();
   registerTimeline();

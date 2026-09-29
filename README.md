@@ -14,6 +14,7 @@ WatchieTalkie2 is a **continuation of the former [Watchie-Talkie](https://apps.r
 - **End-to-end encryption:** the server operator cannot read messages
 - **Notifications while the app is closed (optional)** via [ntfy](https://ntfy.sh) (including your own server), your own Telegram bot, or [Pushover](https://pushover.net) – see [Why a phone notification?](#why-a-phone-notification)
 - **All Pebble models:** Pebble / Steel (aplite), Time / Time Steel (basalt), Time Round (chalk), Pebble 2 (diorite), Time 2 (emery), Pebble 2 Duo (flint), Round 2 (gabbro)
+- **Adjustable look**: text size (small, large bold, extra large bold), background and text color, backlight stays on while the app is open (optional) – set in the settings, stored per phone
 - **Radio beep** for new messages through the speaker (Time 2, Pebble 2 Duo, Round 2; can be turned off – on the watch: long SELECT in the list → Beep on/off; in Quiet Time there is neither beep nor vibration)
 - **Battery-friendly:** long polling only while the app is open (a request waits up to 25 s and returns immediately when something new arrives), no background activity otherwise
 - **Lightweight server:** Node.js with no dependencies, a single file, JSON storage; info page with statistics (users, messages, how many dictated); Docker supported

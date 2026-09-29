@@ -30,6 +30,14 @@
   footer{position:fixed;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--line);padding:10px 12px}
   footer .row,footer .msg{max-width:560px;margin:0 auto}footer .msg{margin-bottom:8px;font-weight:600}footer button.main{flex:1;padding:12px}
   code{font-size:12px;overflow-wrap:anywhere}
+  .seg{display:flex;gap:6px;flex-wrap:wrap}.seg button.on{outline:2px solid var(--accent);font-weight:600}
+  .sw{display:flex;gap:6px;flex-wrap:wrap}.sw button{width:34px;height:34px;padding:0;border-radius:50%;border:2px solid var(--line)}
+  .sw button.on{outline:3px solid var(--accent);outline-offset:2px}
+  #lookPrev{border-radius:14px;padding:8px 10px;margin:10px auto 4px;max-width:240px;font-family:system-ui,sans-serif;border:1px solid var(--line)}
+  #lookPrev .t{text-align:center;font-weight:700;font-size:13px;margin-bottom:4px}
+  #lookPrev .b{border-radius:7px;padding:3px 7px;margin:5px 0;border:1px solid}
+  #lookPrev .b.mine{margin-left:14px;text-align:right}#lookPrev .b:not(.mine){margin-right:14px}
+  #lookPrev .f{font-weight:700;font-size:12px}
 </style>
 </head>
 <body>
@@ -175,6 +183,22 @@
     </section>
   </div>
 
+  <section id="look">
+    <h2>Display on the watch</h2>
+    <label>Text size in chats</label>
+    <div class="seg" id="lookFont"><button data-v="0">Small</button><button data-v="1"><b>Large</b></button><button data-v="2" style="font-size:19px"><b>Extra large</b></button></div>
+    <label>Presets</label>
+    <div class="seg" id="lookPresets"></div>
+    <label>Background</label>
+    <div class="sw" id="lookBg"></div>
+    <div id="lookFgBox"><label>Text</label><div class="sw" id="lookFg"></div></div>
+    <p class="muted hidden" id="lookBw">This watch shows black and white only: pick the background, text uses the other color.</p>
+    <div id="lookPrev"><div class="t">Anna</div><div class="b"><div class="f">anna</div>Are you coming?</div><div class="b mine">On my way!</div></div>
+    <div class="msg err hidden" id="lookWarn">Low contrast – text may be hard to read on the watch.</div>
+    <div class="check"><input type="checkbox" id="lookLight"><label for="lookLight" style="margin:0;color:inherit">Keep the backlight on while the app is open (uses more battery)</label></div>
+    <p class="muted">Stored on this phone and sent to the watch with "Save &amp; back to watch".</p>
+  </section>
+
   <p class="muted">Use at your own risk, without any guarantee of availability or delivery. Users are responsible for their content. A free hobby continuation of the former Watchie-Talkie (offline).</p>
   <p class="muted"><a id="impressum" href="#">Imprint, privacy &amp; liability of the server</a> · <a href="https://github.com/sgitaize/Pebble-WatchieTalkie">Open source on GitHub</a></p>
 </main>
@@ -198,7 +222,7 @@ try { history.replaceState(null, '', location.pathname + location.search); } cat
 /* Neu laden am Cache vorbei: neuer ?v= erzwingt frisches HTML; Daten der Uhr (Hash) samt frisch angelegtem Konto/Schlüssel werden mitgegeben, andere ungespeicherte Änderungen gehen verloren */
 $('reloadBtn').onclick = () => {
   const q = new URLSearchParams(location.search); q.set('v', Date.now().toString(36));
-  location.replace(location.pathname + '?' + q + '#' + encodeURIComponent(JSON.stringify(Object.assign({}, init, { server, token, sk, hasKey: !!sk, savedToken }))));
+  location.replace(location.pathname + '?' + q + '#' + encodeURIComponent(JSON.stringify(Object.assign({}, init, { server, token, sk, hasKey: !!sk, savedToken, look }))));
 };
 /* Schlüssel: vorhandenen vom Handy übernehmen, sonst neu erzeugen; Seed jedes Mal frisch (Browser-Zufall) */
 const b64 = (u) => btoa(String.fromCharCode.apply(null, u));
@@ -427,6 +451,55 @@ $('ntfyCopy').onclick = () => {
   $('ntfyTopic').select();
   (navigator.clipboard ? navigator.clipboard.writeText($('ntfyTopic').value) : Promise.reject()).then(() => flash('Topic copied', true), () => document.execCommand('copy'));
 };
+/* Aussehen auf der Uhr: nur lokal (Handy), geht mit „Save“ ans Handy zurück */
+const PEBBLE_COLORS = ['#FFFFFF', '#AAAAAA', '#555555', '#000000', '#FFFFAA', '#FFFF00', '#FFAA00', '#FF5500', '#FF0000', '#FFAAAA',
+  '#AA00AA', '#550055', '#AAFFFF', '#55AAFF', '#0055AA', '#000055', '#AAFFAA', '#00AA55', '#005500'];
+const LOOK_PRESETS = [['Light', '#FFFFFF', '#000000'], ['Dark', '#000000', '#FFFFFF'], ['Yellow on black', '#000000', '#FFFF00'],
+  ['Night blue', '#000055', '#FFFFFF'], ['Paper', '#FFFFAA', '#000000']];
+const bw = ['aplite', 'diorite', 'flint'].includes(init.platform);
+const look = Object.assign({ font: 0, bg: '#FFFFFF', fg: '#000000', light: false }, init.look || {});
+if (bw) { look.bg = look.bg === '#FFFFFF' ? '#FFFFFF' : '#000000'; look.fg = look.bg === '#FFFFFF' ? '#000000' : '#FFFFFF'; }
+const lum = (h) => [1, 3, 5].map((i) => parseInt(h.substr(i, 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+  .reduce((a, c, i) => a + c * [0.2126, 0.7152, 0.0722][i], 0);
+const contrast = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+/* wie auf der Uhr: eigene Blase = 2/3 Hintergrund + 1/3 Schrift je Kanal (Stufen 0, 55, AA, FF) */
+const soft = (bg, fg) => '#' + [1, 3, 5].map((i) => {
+  const q = (h) => Math.round(parseInt(h.substr(i, 2), 16) / 85);
+  return (Math.floor((q(bg) * 2 + q(fg) + 1) / 3) * 85).toString(16).padStart(2, '0');
+}).join('').toUpperCase();
+function lookShow() {
+  document.querySelectorAll('#lookFont button').forEach((b) => b.classList.toggle('on', +b.dataset.v === look.font));
+  document.querySelectorAll('#lookBg button').forEach((b) => b.classList.toggle('on', b.dataset.c === look.bg));
+  document.querySelectorAll('#lookFg button').forEach((b) => b.classList.toggle('on', b.dataset.c === look.fg));
+  const p = $('lookPrev'), mine = p.querySelector('.mine');
+  p.style.background = look.bg; p.style.color = look.fg;
+  p.style.fontSize = ['15px', '19px', '22px'][look.font]; p.style.fontWeight = look.font ? '700' : '400';
+  p.querySelectorAll('.b').forEach((b) => { b.style.borderColor = look.fg; });
+  mine.style.background = bw ? look.fg : soft(look.bg, look.fg); mine.style.color = bw ? look.bg : look.fg;
+  $('lookWarn').classList.toggle('hidden', contrast(look.bg, look.fg) >= 4.5 && (bw || contrast(soft(look.bg, look.fg), look.fg) >= 3));
+  $('lookLight').checked = look.light;
+}
+function swatches(el, key, colors) {
+  colors.forEach((c) => {
+    const b = document.createElement('button');
+    b.dataset.c = c; b.style.background = c; b.title = c; b.setAttribute('aria-label', (key === 'bg' ? 'Background ' : 'Text ') + c);
+    b.onclick = () => { look[key] = c; if (bw) look.fg = look.bg === '#FFFFFF' ? '#000000' : '#FFFFFF'; lookShow(); };
+    el.appendChild(b);
+  });
+}
+swatches($('lookBg'), 'bg', bw ? ['#FFFFFF', '#000000'] : PEBBLE_COLORS);
+if (!bw) swatches($('lookFg'), 'fg', PEBBLE_COLORS);
+$('lookFgBox').classList.toggle('hidden', bw); $('lookBw').classList.toggle('hidden', !bw);
+LOOK_PRESETS.filter((x, i) => !bw || i < 2).forEach(([name, bg, fg]) => {
+  const b = document.createElement('button'); b.className = 'small'; b.textContent = name;
+  b.style.background = bg; b.style.color = fg; b.style.borderColor = fg;
+  b.onclick = () => { look.bg = bg; look.fg = fg; lookShow(); };
+  $('lookPresets').appendChild(b);
+});
+document.querySelectorAll('#lookFont button').forEach((b) => { b.onclick = () => { look.font = +b.dataset.v; lookShow(); }; });
+$('lookLight').onchange = () => { look.light = $('lookLight').checked; };
+$('look').classList.toggle('hidden', !init.look);   // ältere App-Versionen (vor 1.5.0) kennen das Aussehen nicht
+lookShow();
 $('saveBtn').onclick = () => saveAndClose();
 async function saveAndClose() {
   if (me) {
@@ -435,7 +508,7 @@ async function saveAndClose() {
   if (token) ensureKeys();
   const seed = b64(nacl.randomBytes(32));
   if (me && sk) { try { await api('PUT', '/v1/me', { pubKey: myPub() }); } catch (e) { return flash(e.message); } }
-  location.href = returnTo + encodeURIComponent(JSON.stringify({ server, token, sk: token ? sk : '', seed, ackChanged }));
+  location.href = returnTo + encodeURIComponent(JSON.stringify(Object.assign({ server, token, sk: token ? sk : '', seed, ackChanged }, init.look ? { look } : {})));
 }
 loadServer();
 </script>

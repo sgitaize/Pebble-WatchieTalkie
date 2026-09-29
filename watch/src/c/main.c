@@ -5,7 +5,7 @@
 #include <pebble.h>
 
 /* Befehle pkjs → Uhr */
-enum { C_LIST_ITEM = 2, C_MSG_ITEM = 5, C_NEW_MSG = 7, C_QR_ITEM = 8, C_STATUS = 9, C_SENT = 10, C_PUSH = 11 };
+enum { C_LIST_ITEM = 2, C_MSG_ITEM = 5, C_NEW_MSG = 7, C_QR_ITEM = 8, C_STATUS = 9, C_SENT = 10, C_PUSH = 11, C_LOOK = 12 };
 /* Befehle Uhr → pkjs */
 enum { C_READY = 20, C_OPEN = 21, C_SEND = 22, C_CLOSE = 23, C_ACCEPT = 24, C_DECLINE = 25, C_SEND_VOICE = 26, C_TEST = 27, C_BEEP = 28, C_DELETE = 29, C_PAUSE = 30 };
 /* Art eines Listeneintrags */
@@ -24,17 +24,38 @@ enum { P_REPLY = 0, P_INVITE = 1, P_EMOJI = 2, P_DELETE = 3, P_LIST = 4 };
 #define MAX_QR 10
 #define TEXT_BYTES 512
 
+/* Schriftgröße im Chat (Einstellungsseite): 0 = klein (bisherige Schrift), 1/2 = größer und fett */
 #if PBL_DISPLAY_WIDTH >= 200
-#define FONT_BODY FONT_KEY_GOTHIC_24
+static const char *FONT_BODY[] = { FONT_KEY_GOTHIC_24, FONT_KEY_GOTHIC_24_BOLD, FONT_KEY_GOTHIC_28_BOLD };
+static const char *FONT_NAME[] = { FONT_KEY_GOTHIC_18_BOLD, FONT_KEY_GOTHIC_18_BOLD, FONT_KEY_GOTHIC_24_BOLD };
+static const uint8_t NAME_H[] = { 20, 20, 26 };
 #define FONT_HEAD FONT_KEY_GOTHIC_18_BOLD
 #else
-#define FONT_BODY FONT_KEY_GOTHIC_18
+static const char *FONT_BODY[] = { FONT_KEY_GOTHIC_18, FONT_KEY_GOTHIC_24_BOLD, FONT_KEY_GOTHIC_28_BOLD };
+static const char *FONT_NAME[] = { FONT_KEY_GOTHIC_14_BOLD, FONT_KEY_GOTHIC_18_BOLD, FONT_KEY_GOTHIC_18_BOLD };
+static const uint8_t NAME_H[] = { 16, 20, 20 };
 #define FONT_HEAD FONT_KEY_GOTHIC_14_BOLD
 #endif
 #define PAD 4
 #define ACCENT PBL_IF_COLOR_ELSE(GColorSunsetOrange, GColorBlack)
 #define ROUND_INSET PBL_IF_ROUND_ELSE(22, 0)
-#define TOP (PBL_IF_ROUND_ELSE(36, 2) + (PBL_DISPLAY_WIDTH >= 200 ? 26 : 22))
+#define TOP (PBL_IF_ROUND_ELSE(36, 2) + s_name_h + 6)
+
+/* Aussehen (Einstellungsseite, auf der Uhr gespeichert): Schriftgröße, Hinter-/Vordergrund (GColor8), Licht an */
+#define PERSIST_LOOK 1
+typedef struct { uint8_t font, bg, fg, light; } Look;
+static Look s_look = { 0, 0xFF, 0xC0, 0 };    /* Standard: schwarze Schrift auf Weiß */
+static GColor col(uint8_t argb) { return (GColor) { .argb = argb }; }
+#define BG col(s_look.bg)
+#define FG col(s_look.fg)
+#if defined(PBL_COLOR)
+/* Eigene Blasen: Mischfarbe 2/3 Hintergrund + 1/3 Schrift (je 2-Bit-Kanal) – hebt sich ab, Schrift bleibt lesbar */
+static GColor soft(void) {
+  uint8_t c = 0xC0;
+  for (int sh = 0; sh < 6; sh += 2) c |= (((((s_look.bg >> sh) & 3) * 2 + ((s_look.fg >> sh) & 3) + 1) / 3) & 3) << sh;
+  return col(c);
+}
+#endif
 
 typedef struct { char id[20]; char title[26]; char preview[44]; uint8_t unread; uint8_t kind; } Chat;
 typedef struct { char *text; char from[17]; bool mine; int16_t h; } Msg;
@@ -90,7 +111,8 @@ static ScrollLayer *s_scroll;
 static Layer *s_content;
 static TextLayer *s_banner;
 static AppTimer *s_banner_timer;
-static GFont s_font_body, s_font_head;
+static GFont s_font_body, s_font_head, s_font_name;
+static int s_name_h;   /* Zeilenhöhe der Absender-/Titelschrift */
 #if defined(PBL_MICROPHONE)
 static DictationSession *s_dict;
 #endif
@@ -155,11 +177,13 @@ static int text_width(void) {
 static void measure(Msg *m) {
   GSize s = graphics_text_layout_get_content_size(m->text ? m->text : "", s_font_body, GRect(0, 0, text_width(), 2000),
                                                   GTextOverflowModeWordWrap, GTextAlignmentLeft);
-  m->h = s.h + (m->mine ? 0 : (PBL_DISPLAY_WIDTH >= 200 ? 20 : 16)) + 2 * PAD + 6;
+  m->h = s.h + (m->mine ? 0 : s_name_h) + 2 * PAD + 6;
 }
+static const char *empty_text(void) { return s_chat_failed ? s_status : s_chat_loading ? TR(T_LOADING) : TR(T_EMPTY_CHAT); }
 static int content_height(void) {
   int h = TOP;
-  if (!s_msg_count) return h + (PBL_DISPLAY_WIDTH >= 200 ? 120 : 90);
+  if (!s_msg_count) return h + 20 + graphics_text_layout_get_content_size(empty_text(), s_font_body,
+    GRect(0, 0, PBL_DISPLAY_WIDTH - 2 * (PAD + ROUND_INSET), 2000), GTextOverflowModeWordWrap, GTextAlignmentCenter).h;
   for (int i = 0; i < s_msg_count; i++) h += s_msgs[i].h;
   return h + PBL_IF_ROUND_ELSE(40, 10);
 }
@@ -167,37 +191,30 @@ static void content_update(Layer *layer, GContext *ctx) {
   GRect b = layer_get_bounds(layer);
   int x0 = PAD + ROUND_INSET, w = b.size.w - 2 * x0;
   int y = TOP;
-  graphics_context_set_text_color(ctx, GColorBlack);
-  graphics_draw_text(ctx, s_open_title, s_font_head, GRect(x0, y - (PBL_DISPLAY_WIDTH >= 200 ? 26 : 22), w, 24),
+  graphics_context_set_text_color(ctx, FG);
+  graphics_draw_text(ctx, s_open_title, s_font_name, GRect(x0, y - s_name_h - 6, w, s_name_h + 8),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
   if (!s_msg_count) {
-    graphics_draw_text(ctx, s_chat_failed ? s_status : s_chat_loading ? TR(T_LOADING) : TR(T_EMPTY_CHAT),
-                       s_font_body, GRect(x0, y, w, 200), GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+    graphics_draw_text(ctx, empty_text(), s_font_body, GRect(x0, y, w, 200), GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
     return;
   }
   for (int i = 0; i < s_msg_count; i++) {
     Msg *m = &s_msgs[i];
     int bw = w - 12, bx = m->mine ? x0 + 12 : x0;
     GRect bubble = GRect(bx, y + 2, bw, m->h - 6);
-#if defined(PBL_COLOR)
-    graphics_context_set_fill_color(ctx, m->mine ? GColorMelon : GColorLightGray);
-    graphics_fill_rect(ctx, bubble, 6, GCornersAll);
-#else
-    graphics_context_set_stroke_color(ctx, GColorBlack);
-    if (m->mine) { graphics_context_set_fill_color(ctx, GColorBlack); graphics_fill_rect(ctx, bubble, 6, GCornersAll); }
+    /* Eigene Nachricht: gefüllte Blase (Farbe: Mischfarbe, S/W: Schriftfarbe mit Hintergrund als Text), fremde: Rahmen */
+    graphics_context_set_stroke_color(ctx, FG);
+    if (m->mine) { graphics_context_set_fill_color(ctx, PBL_IF_COLOR_ELSE(soft(), FG)); graphics_fill_rect(ctx, bubble, 6, GCornersAll); }
     else graphics_draw_round_rect(ctx, bubble, 6);
-    graphics_context_set_text_color(ctx, m->mine ? GColorWhite : GColorBlack);
-#endif
+    graphics_context_set_text_color(ctx, m->mine ? PBL_IF_COLOR_ELSE(FG, BG) : FG);
     int ty = y + 2 + PAD - 3;
     if (!m->mine) {
-      graphics_draw_text(ctx, m->from, s_font_head, GRect(bx + 6, ty, bw - 12, 22), GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-      ty += PBL_DISPLAY_WIDTH >= 200 ? 20 : 16;
+      graphics_draw_text(ctx, m->from, s_font_name, GRect(bx + 6, ty, bw - 12, s_name_h + 6), GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+      ty += s_name_h;
     }
     graphics_draw_text(ctx, m->text ? m->text : "", s_font_body, GRect(bx + 6, ty, bw - 12, 2000), GTextOverflowModeWordWrap,
                        m->mine ? GTextAlignmentRight : GTextAlignmentLeft, NULL);
-#if !defined(PBL_COLOR)
-    graphics_context_set_text_color(ctx, GColorBlack);
-#endif
+    graphics_context_set_text_color(ctx, FG);
     y += m->h;
   }
 }
@@ -274,8 +291,8 @@ static void chat_load(Window *w) {
   layer_add_child(root, scroll_layer_get_layer(s_scroll));
   int bh = PBL_DISPLAY_WIDTH >= 200 ? 30 : 24;
   s_banner = text_layer_create(GRect(0, b.size.h - bh - PBL_IF_ROUND_ELSE(14, 0), b.size.w, bh));
-  text_layer_set_background_color(s_banner, GColorBlack);
-  text_layer_set_text_color(s_banner, GColorWhite);
+  text_layer_set_background_color(s_banner, FG);
+  text_layer_set_text_color(s_banner, BG);
   text_layer_set_font(s_banner, s_font_head);
   text_layer_set_text_alignment(s_banner, GTextAlignmentCenter);
   layer_set_hidden(text_layer_get_layer(s_banner), true);
@@ -302,6 +319,7 @@ static void chat_open(Chat *c) {
   s_chat_failed = false;
   watchdog_arm();
   s_chat_win = window_create();
+  window_set_background_color(s_chat_win, BG);
   window_set_window_handlers(s_chat_win, (WindowHandlers) { .load = chat_load, .unload = chat_unload });
   window_stack_push(s_chat_win, true);
   send_cmd(C_OPEN, c->id, NULL);
@@ -394,9 +412,8 @@ static void pick_load(Window *w) {
   Layer *root = window_get_root_layer(w);
   s_pick_menu = menu_layer_create(layer_get_bounds(root));
   menu_layer_set_callbacks(s_pick_menu, NULL, (MenuLayerCallbacks) { .get_num_rows = pick_rows, .draw_row = pick_draw, .select_click = pick_select });
-#if defined(PBL_COLOR)
-  menu_layer_set_highlight_colors(s_pick_menu, ACCENT, GColorWhite);
-#endif
+  menu_layer_set_normal_colors(s_pick_menu, BG, FG);
+  menu_layer_set_highlight_colors(s_pick_menu, FG, BG);
   menu_layer_set_click_config_onto_window(s_pick_menu, w);
   layer_add_child(root, menu_layer_get_layer(s_pick_menu));
 }
@@ -480,9 +497,8 @@ static void main_load(Window *w) {
     .get_num_rows = main_rows, .get_cell_height = main_row_h, .draw_row = main_draw, .select_click = main_select,
     .select_long_click = main_long_select,
     .get_header_height = main_header_h, .draw_header = main_header });
-#if defined(PBL_COLOR)
-  menu_layer_set_highlight_colors(s_menu, ACCENT, GColorWhite);
-#endif
+  menu_layer_set_normal_colors(s_menu, BG, FG);
+  menu_layer_set_highlight_colors(s_menu, FG, BG);
   menu_layer_set_click_config_onto_window(s_menu, w);
   layer_add_child(root, menu_layer_get_layer(s_menu));
 }
@@ -512,6 +528,28 @@ static void watchdog_arm(void) {
   s_rx_mark = s_rx;
   if (s_wd_timer) app_timer_cancel(s_wd_timer);
   s_wd_timer = app_timer_register(20000, watchdog_fire, NULL);
+}
+
+/* -------------------------------------------------------- Aussehen -- */
+static void look_apply(bool light_was) {
+  if (s_look.font > 2) s_look.font = 0;
+#if !defined(PBL_COLOR)
+  s_look.bg = s_look.bg == 0xFF ? 0xFF : 0xC0;       /* S/W: nur Weiß oder Schwarz, Schrift immer die Gegenfarbe */
+  s_look.fg = s_look.bg ^ 0x3F;
+#endif
+  s_font_body = fonts_get_system_font(FONT_BODY[s_look.font]);
+  s_font_name = fonts_get_system_font(FONT_NAME[s_look.font]);
+  s_name_h = NAME_H[s_look.font];
+  for (int i = 0; i < s_msg_count; i++) measure(&s_msgs[i]);
+  if (s_menu) { menu_layer_set_normal_colors(s_menu, BG, FG); menu_layer_set_highlight_colors(s_menu, FG, BG); main_reload(); }
+  if (s_pick_menu) { menu_layer_set_normal_colors(s_pick_menu, BG, FG); menu_layer_set_highlight_colors(s_pick_menu, FG, BG); menu_layer_reload_data(s_pick_menu); }
+  if (s_chat_win) {
+    window_set_background_color(s_chat_win, BG);
+    text_layer_set_background_color(s_banner, FG); text_layer_set_text_color(s_banner, BG);
+    chat_relayout(false);
+  }
+  if (s_look.light) light_enable(true);               /* Licht bleibt an, solange die App offen ist */
+  else if (light_was) light_enable(false);            /* zurück auf automatisch */
 }
 
 /* ------------------------------------------------------ Empfangen -- */
@@ -583,6 +621,14 @@ static void inbox(DictionaryIterator *it, void *ctx) {
       if (s_pick_menu) menu_layer_reload_data(s_pick_menu);
       main_reload();
       break;
+    case C_LOOK: {                                /* IDX: Schriftgröße · COUNT: Hintergrund << 8 | Schrift (GColor8) · FLAGS: Licht an */
+      bool light_was = s_look.light;
+      int c = num(it, MESSAGE_KEY_COUNT);
+      s_look = (Look) { idx, (c >> 8) & 0xFF, c & 0xFF, num(it, MESSAGE_KEY_FLAGS) & 1 };
+      look_apply(light_was);
+      persist_write_data(PERSIST_LOOK, &s_look, sizeof(s_look));
+      break;
+    }
     case C_SENT:
       if (!(num(it, MESSAGE_KEY_FLAGS) & 1)) { vibes_double_pulse(); banner_show(str(it, MESSAGE_KEY_TEXT)[0] ? str(it, MESSAGE_KEY_TEXT) : TR(T_SEND_FAILED)); }
       break;
@@ -591,8 +637,9 @@ static void inbox(DictionaryIterator *it, void *ctx) {
 
 static void init(void) {
   snprintf(s_status, sizeof(s_status), "%s", TR(T_LOADING));
-  s_font_body = fonts_get_system_font(FONT_BODY);
   s_font_head = fonts_get_system_font(FONT_HEAD);
+  if (persist_exists(PERSIST_LOOK)) persist_read_data(PERSIST_LOOK, &s_look, sizeof(s_look));
+  look_apply(false);
   app_message_register_inbox_received(inbox);
   app_message_register_outbox_sent(out_sent);
   app_message_register_outbox_failed(out_failed);
@@ -612,6 +659,7 @@ static void deinit(void) {
   if (s_dict) dictation_session_destroy(s_dict);
 #endif
   window_destroy(s_main_win);
+  if (s_look.light) light_enable(false);
   msgs_clear();
   for (int i = 0; i < s_qr_count; i++) free(s_qr[i]);
 }
