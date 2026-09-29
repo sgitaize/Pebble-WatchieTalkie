@@ -454,7 +454,7 @@ static void inbox(DictionaryIterator *it, void *ctx) {
     case C_NEW_MSG: {
       bool here = s_chat_win && strcmp(str(it, MESSAGE_KEY_CHAT), s_open_chat) == 0;
       if (here) { msg_append(str(it, MESSAGE_KEY_FROM), str(it, MESSAGE_KEY_TEXT), false); chat_relayout(true); }
-      if (s_vibe) vibes_short_pulse();
+      if (s_vibe && !quiet_time_is_active()) vibes_short_pulse();   /* Ruhemodus: weder Vibration noch Piep */
       roger_beep();
       if (!here && s_chat_win) {
         static char b[48];

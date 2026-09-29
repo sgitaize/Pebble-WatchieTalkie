@@ -1,1 +1,1 @@
-1.3: Hold SELECT in the chat list to mute/unmute the radio beep (crossed speaker in the header). No beep during Quiet Time. Optional phone notifications when the app is closed via ntfy, Telegram or Pushover (set up in the settings).
+1.3: Hold SELECT in the chat list to mute/unmute the radio beep (crossed speaker in the header). No beep and no vibration during Quiet Time. Optional phone notifications when the app is closed via ntfy, Telegram or Pushover (set up in the settings).
