@@ -7,7 +7,7 @@
 /* Befehle pkjs → Uhr */
 enum { C_LIST_ITEM = 2, C_MSG_ITEM = 5, C_NEW_MSG = 7, C_QR_ITEM = 8, C_STATUS = 9, C_SENT = 10 };
 /* Befehle Uhr → pkjs */
-enum { C_READY = 20, C_OPEN = 21, C_SEND = 22, C_CLOSE = 23, C_ACCEPT = 24, C_DECLINE = 25, C_SEND_VOICE = 26, C_TEST = 27 };
+enum { C_READY = 20, C_OPEN = 21, C_SEND = 22, C_CLOSE = 23, C_ACCEPT = 24, C_DECLINE = 25, C_SEND_VOICE = 26, C_TEST = 27, C_BEEP = 28 };
 /* Art eines Listeneintrags */
 enum { K_CHAT = 0, K_CONTACT_INVITE = 1, K_GROUP_INVITE = 2 };
 
@@ -57,15 +57,19 @@ static bool s_vibe = true;
 static bool s_beep = true;
 
 /* Funk-Piep („Roger“) bei neuer Nachricht – nur Uhren mit Lautsprecher (Time 2, Pebble 2 Duo, Round 2).
-   Ältere Modelle laufen mit Firmware ohne Lautsprecher-Funktionen, dort wird nichts aufgerufen. */
-static void roger_beep(void) {
+   Ältere Modelle laufen mit Firmware ohne Lautsprecher-Funktionen, dort wird nichts aufgerufen.
+   Nie im Ruhemodus der Uhr; in der Liste schaltet langes SELECT den Piep an/aus (wie auf der Einstellungsseite). */
 #if defined(PBL_PLATFORM_EMERY) || defined(PBL_PLATFORM_FLINT) || defined(PBL_PLATFORM_GABBRO)
+#define HAS_SPEAKER 1
+#endif
+static void roger_beep(void) {
+#if defined(HAS_SPEAKER)
   static const SpeakerNote notes[] = {
     { .midi_note = 84, .waveform = SpeakerWaveformSquare, .duration_ms = 60, .velocity = 0 },
     { .midi_note = 0, .waveform = SpeakerWaveformSquare, .duration_ms = 25, .velocity = 0 },
     { .midi_note = 91, .waveform = SpeakerWaveformSquare, .duration_ms = 90, .velocity = 0 },
   };
-  if (s_beep) speaker_play_notes(notes, ARRAY_LENGTH(notes), 35);
+  if (s_beep && !quiet_time_is_active()) speaker_play_notes(notes, ARRAY_LENGTH(notes), 35);
 #endif
 }
 
@@ -364,6 +368,18 @@ static void main_header(GContext *ctx, const Layer *cell, uint16_t s, void *data
   graphics_draw_text(ctx, name, s_font_head, GRect(x, y, w1.w + 2, 22), GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
   graphics_context_set_text_color(ctx, PBL_IF_COLOR_ELSE(GColorYellow, GColorWhite));
   graphics_draw_text(ctx, "2", s_font_head, GRect(x + w1.w + 1, y, w2.w + 2, 22), GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
+#if defined(HAS_SPEAKER)
+  if (!s_beep) {   /* Piep aus: kleiner durchgestrichener Lautsprecher rechts */
+    int sx = x + w1.w + w2.w + 8, sy = y + PBL_IF_ROUND_ELSE(5, (PBL_DISPLAY_WIDTH >= 200 ? 7 : 4));
+    graphics_context_set_fill_color(ctx, GColorWhite);
+    graphics_fill_rect(ctx, GRect(sx, sy + 3, 4, 6), 0, GCornerNone);
+    GPathInfo cone = { 4, (GPoint[]) { {sx + 4, sy + 3}, {sx + 9, sy}, {sx + 9, sy + 12}, {sx + 4, sy + 9} } };
+    GPath *gp = gpath_create(&cone); gpath_draw_filled(ctx, gp); gpath_destroy(gp);
+    graphics_context_set_stroke_color(ctx, PBL_IF_COLOR_ELSE(GColorYellow, GColorWhite));
+    graphics_context_set_stroke_width(ctx, 2);
+    graphics_draw_line(ctx, GPoint(sx - 1, sy + 12), GPoint(sx + 11, sy));
+  }
+#endif
 }
 /* Rund: leere Liste (lange Statuszeile) nicht zentrieren, sonst rutscht die Kopfzeile aus dem Bild */
 static void main_reload(void) {
@@ -379,11 +395,23 @@ static void main_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
   if (c->kind == K_CHAT) chat_open(c);
   else { s_pick_chat = *c; pick_open(1); }
 }
+#if defined(HAS_SPEAKER)
+static void main_long_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
+  s_beep = !s_beep;
+  vibes_short_pulse();
+  send_cmd(C_BEEP, NULL, s_beep ? "1" : "0");
+  menu_layer_reload_data(m);
+  if (s_beep) roger_beep();
+}
+#endif
 static void main_load(Window *w) {
   Layer *root = window_get_root_layer(w);
   s_menu = menu_layer_create(layer_get_bounds(root));
   menu_layer_set_callbacks(s_menu, NULL, (MenuLayerCallbacks) {
     .get_num_rows = main_rows, .get_cell_height = main_row_h, .draw_row = main_draw, .select_click = main_select,
+#if defined(HAS_SPEAKER)
+    .select_long_click = main_long_select,
+#endif
     .get_header_height = main_header_h, .draw_header = main_header });
 #if defined(PBL_COLOR)
   menu_layer_set_highlight_colors(s_menu, ACCENT, GColorWhite);

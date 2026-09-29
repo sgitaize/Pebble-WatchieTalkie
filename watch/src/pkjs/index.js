@@ -8,7 +8,7 @@ E2E.init({ get: function (k) { return localStorage.getItem(k); }, set: function 
 var DEFAULT_SERVER = 'https://watchietalkie.aize-it.de';
 var CONFIG_URL = 'https://sgitaize.github.io/Pebble-WatchieTalkie/config/';
 var C = { LIST_ITEM: 2, MSG_ITEM: 5, NEW_MSG: 7, QR_ITEM: 8, STATUS: 9, SENT: 10,
-  READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25, SEND_VOICE: 26, TEST: 27 };
+  READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25, SEND_VOICE: 26, TEST: 27, BEEP: 28 };
 var SYS_CID = 'u.watchietalkie';     // System-Chat des Servers (Testnachrichten, nur lesbar)
 var K = { CHAT: 0, CONTACT_INVITE: 1, GROUP_INVITE: 2 };
 
@@ -240,6 +240,12 @@ function poll() {
   });
 }
 
+/* Piep an/aus direkt auf der Uhr (langes SELECT in der Liste) – gleiche Einstellung wie auf der Einstellungsseite */
+function setBeep(on) {
+  if (!token) return;
+  api('PUT', '/v1/me', { cfg: { beep: on } }, function (err, r) { if (!err && r) me = r; });
+}
+
 /* ---------------------------------------------------------- Timeline-Token -- */
 function registerTimeline() {
   if (!token || typeof Pebble.getTimelineToken !== 'function') return;
@@ -268,6 +274,7 @@ Pebble.addEventListener('appmessage', function (e) {
   else if (cmd === C.ACCEPT) answerInvite(cid, true);
   else if (cmd === C.DECLINE) answerInvite(cid, false);
   else if (cmd === C.TEST) requestTest();
+  else if (cmd === C.BEEP) setBeep(p.TEXT === '1');
 });
 
 Pebble.addEventListener('showConfiguration', function () {

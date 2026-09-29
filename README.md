@@ -14,7 +14,7 @@ WatchieTalkie2 ist eine **Weiterführung des früheren [Watchie-Talkie](https://
 - **Ende-zu-Ende-Verschlüsselung:** der Server-Betreiber kann Nachrichten nicht lesen
 - **Benachrichtigung bei geschlossener App (optional)** über [ntfy](https://ntfy.sh) (auch eigener Server), einen eigenen Telegram-Bot oder [Pushover](https://pushover.net) – siehe [Warum eine Handy-Benachrichtigung?](#warum-eine-handy-benachrichtigung)
 - **Alle Pebble-Modelle:** Pebble / Steel (aplite), Time / Time Steel (basalt), Time Round (chalk), Pebble 2 (diorite), Time 2 (emery), Pebble 2 Duo (flint), Round 2 (gabbro)
-- **Funk-Piep** bei neuen Nachrichten über den Lautsprecher (Time 2, Pebble 2 Duo, Round 2; abschaltbar)
+- **Funk-Piep** bei neuen Nachrichten über den Lautsprecher (Time 2, Pebble 2 Duo, Round 2; abschaltbar – auf der Uhr per langem SELECT in der Liste, im Ruhemodus nie)
 - **Akkuschonend:** Long-Polling nur bei offener App (eine Anfrage wartet bis zu 25 s und kommt sofort bei Neuem zurück), sonst keine Hintergrundaktivität
 - **Leichter Server:** Node.js ohne Abhängigkeiten, eine Datei, JSON-Speicher; Info-Seite mit Statistik (Nutzer, Nachrichten, davon diktiert); auch per Docker
 
