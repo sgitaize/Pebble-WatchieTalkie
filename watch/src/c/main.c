@@ -36,6 +36,16 @@ static const char *FONT_NAME[] = { FONT_KEY_GOTHIC_14_BOLD, FONT_KEY_GOTHIC_18_B
 static const uint8_t NAME_H[] = { 16, 20, 20 };
 #define FONT_HEAD FONT_KEY_GOTHIC_14_BOLD
 #endif
+/* Menüs: Größe 0 = Systemzelle (menu_cell_basic_draw), 1/2 = eigene Zelle mit größerer Schrift (Titel · Untertitel) */
+static const char *FONT_MTITLE[] = { NULL, FONT_KEY_GOTHIC_28_BOLD, FONT_KEY_GOTHIC_28_BOLD };
+#if PBL_DISPLAY_WIDTH >= 200
+static const char *FONT_MSUB[] = { NULL, FONT_KEY_GOTHIC_24, FONT_KEY_GOTHIC_24_BOLD };
+static const uint8_t MSUB_H[] = { 0, 26, 26 };
+#else
+static const char *FONT_MSUB[] = { NULL, FONT_KEY_GOTHIC_18_BOLD, FONT_KEY_GOTHIC_24_BOLD };
+static const uint8_t MSUB_H[] = { 0, 20, 26 };
+#endif
+#define MTITLE_H 30
 #define PAD 4
 #define ACCENT PBL_IF_COLOR_ELSE(GColorSunsetOrange, GColorBlack)
 #define ROUND_INSET PBL_IF_ROUND_ELSE(22, 0)
@@ -111,7 +121,7 @@ static ScrollLayer *s_scroll;
 static Layer *s_content;
 static TextLayer *s_banner;
 static AppTimer *s_banner_timer;
-static GFont s_font_body, s_font_head, s_font_name;
+static GFont s_font_body, s_font_head, s_font_name, s_font_mtitle, s_font_msub;
 static int s_name_h;   /* Zeilenhöhe der Absender-/Titelschrift */
 #if defined(PBL_MICROPHONE)
 static DictationSession *s_dict;
@@ -325,6 +335,25 @@ static void chat_open(Chat *c) {
   send_cmd(C_OPEN, c->id, NULL);
 }
 
+/* ------------------------------------------------------ Menüzelle -- */
+/* Zeilenhöhe bei Schriftgröße 1/2; rund zeigen nicht markierte Zeilen nur den Titel */
+static int16_t cell_h(bool sub, bool focused) {
+  if (PBL_IF_ROUND_ELSE(!focused, false)) return MTITLE_H + 6;
+  return MTITLE_H + (sub ? MSUB_H[s_look.font] : 0) + 10;
+}
+static void cell_draw(GContext *ctx, const Layer *cell, const char *title, const char *sub) {
+  if (!s_look.font) { menu_cell_basic_draw(ctx, cell, title, sub, NULL); return; }
+#if defined(PBL_ROUND)
+  if (!menu_cell_layer_is_highlighted(cell)) sub = NULL;
+#endif
+  GRect b = layer_get_bounds(cell);
+  int x = PBL_IF_ROUND_ELSE(12, 5), w = b.size.w - 2 * x;
+  int sh = sub ? MSUB_H[s_look.font] : 0, y = (b.size.h - MTITLE_H - sh) / 2 - 4;
+  GTextAlignment al = PBL_IF_ROUND_ELSE(GTextAlignmentCenter, GTextAlignmentLeft);
+  graphics_draw_text(ctx, title, s_font_mtitle, GRect(x, y, w, MTITLE_H + 4), GTextOverflowModeTrailingEllipsis, al, NULL);
+  if (sub) graphics_draw_text(ctx, sub, s_font_msub, GRect(x, y + MTITLE_H, w, sh + 4), GTextOverflowModeTrailingEllipsis, al, NULL);
+}
+
 /* ---------------------------------------------------- Auswahlmenü -- */
 /* Emojis wie im Original-Watchie-Talkie: gesendet wird das echte Emoji (UTF-8), die Uhr-Schrift zeigt den Text-Smiley */
 static const char *EMOJI[][3] = {
@@ -354,21 +383,32 @@ static uint16_t pick_rows(MenuLayer *m, uint16_t s, void *ctx) {
 }
 static void pick_draw(GContext *ctx, const Layer *cell, MenuIndex *idx, void *data) {
   int r = idx->row;
-  if (s_pick_mode == P_EMOJI) { menu_cell_basic_draw(ctx, cell, EMOJI[r][1], EMOJI[r][2], NULL); return; }
+  if (s_pick_mode == P_EMOJI) { cell_draw(ctx, cell, EMOJI[r][1], EMOJI[r][2]); return; }
   int x = r - pick_extra_start();
   if (s_pick_mode == P_LIST || (s_pick_mode == P_REPLY && x >= 0)) {
     if (s_push_avail && x == 0) {
       static char sub[20];
       if (paused()) { struct tm *t = localtime(&s_pause_until); strftime(sub, sizeof(sub), clock_is_24h_style() ? "paused until %H:%M" : "paused until %I:%M", t); }
       else snprintf(sub, sizeof(sub), "for %d min", s_pause_min);
-      menu_cell_basic_draw(ctx, cell, TR(paused() ? T_RESUME : T_PAUSE), sub, NULL);
-    } else menu_cell_basic_draw(ctx, cell, TR(s_beep ? T_BEEP_OFF : T_BEEP_ON), NULL, NULL);
+      cell_draw(ctx, cell, TR(paused() ? T_RESUME : T_PAUSE), sub);
+    } else cell_draw(ctx, cell, TR(s_beep ? T_BEEP_OFF : T_BEEP_ON), NULL);
     return;
   }
   const char *t = s_pick_mode == P_INVITE ? TR(r == 0 ? T_ACCEPT : T_DECLINE)
                 : s_pick_mode == P_DELETE ? TR(r == 0 ? T_DELETE_YES : T_CANCEL)
                 : r < s_qr_count ? s_qr[r] : TR(r == s_qr_count ? T_EMOJI : T_DELETE_LAST);
-  menu_cell_basic_draw(ctx, cell, t, NULL, NULL);
+  cell_draw(ctx, cell, t, NULL);
+}
+static int16_t pick_row_h(MenuLayer *m, MenuIndex *idx, void *ctx) {
+  bool sub = s_pick_mode == P_EMOJI
+    || ((s_pick_mode == P_LIST || s_pick_mode == P_REPLY) && s_push_avail && idx->row == pick_extra_start());
+  return cell_h(sub, menu_layer_is_index_selected(m, idx));
+}
+static void pick_select(MenuLayer *m, MenuIndex *idx, void *ctx);
+/* Schriftgröße 0: Standard-Zeilenhöhen des Systems (kein get_cell_height) */
+static void pick_callbacks(void) {
+  menu_layer_set_callbacks(s_pick_menu, NULL, (MenuLayerCallbacks) { .get_num_rows = pick_rows, .draw_row = pick_draw,
+    .select_click = pick_select, .get_cell_height = s_look.font ? pick_row_h : NULL });
 }
 static void pick_mode(int mode) {
   s_pick_mode = mode;
@@ -411,7 +451,7 @@ static void pick_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
 static void pick_load(Window *w) {
   Layer *root = window_get_root_layer(w);
   s_pick_menu = menu_layer_create(layer_get_bounds(root));
-  menu_layer_set_callbacks(s_pick_menu, NULL, (MenuLayerCallbacks) { .get_num_rows = pick_rows, .draw_row = pick_draw, .select_click = pick_select });
+  pick_callbacks();
   menu_layer_set_normal_colors(s_pick_menu, BG, FG);
   menu_layer_set_highlight_colors(s_pick_menu, FG, BG);
   menu_layer_set_click_config_onto_window(s_pick_menu, w);
@@ -430,12 +470,13 @@ static void pick_open(int mode) {
 static uint16_t main_rows(MenuLayer *m, uint16_t s, void *ctx) { return s_chat_count ? s_chat_count : 1; }
 static int16_t main_row_h(MenuLayer *m, MenuIndex *idx, void *ctx) {
   if (!s_chat_count) return layer_get_bounds(menu_layer_get_layer(m)).size.h - PBL_IF_ROUND_ELSE(32 + 24, PBL_DISPLAY_WIDTH >= 200 ? 28 : 22);
+  if (s_look.font) return cell_h(true, menu_layer_is_index_selected(m, idx));
   return PBL_IF_ROUND_ELSE(menu_layer_is_index_selected(m, idx) ? 60 : 36, PBL_DISPLAY_WIDTH >= 200 ? 56 : 44);
 }
 static void main_draw(GContext *ctx, const Layer *cell, MenuIndex *idx, void *data) {
   if (!s_chat_count) {
     GRect b = layer_get_bounds(cell);
-    graphics_draw_text(ctx, s_status, s_font_head, grect_inset(b, GEdgeInsets(6, 6 + ROUND_INSET)), GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+    graphics_draw_text(ctx, s_status, s_look.font ? s_font_msub : s_font_head, grect_inset(b, GEdgeInsets(6, 6 + ROUND_INSET)), GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
     return;
   }
   Chat *c = &s_chats[idx->row];
@@ -443,7 +484,7 @@ static void main_draw(GContext *ctx, const Layer *cell, MenuIndex *idx, void *da
   if (c->unread) snprintf(title, sizeof(title), "(%d) %s", c->unread, c->title);
   else snprintf(title, sizeof(title), "%s", c->title);
   const char *sub = c->kind == K_CHAT ? c->preview : (c->kind == K_CONTACT_INVITE ? TR(T_CONTACT_REQ) : TR(T_GROUP_INV));
-  menu_cell_basic_draw(ctx, cell, title, sub, NULL);
+  cell_draw(ctx, cell, title, sub);
 }
 static int16_t main_header_h(MenuLayer *m, uint16_t s, void *ctx) { return PBL_IF_ROUND_ELSE(32, PBL_DISPLAY_WIDTH >= 200 ? 28 : 22); }
 static void main_header(GContext *ctx, const Layer *cell, uint16_t s, void *data) {
@@ -540,9 +581,10 @@ static void look_apply(bool light_was) {
   s_font_body = fonts_get_system_font(FONT_BODY[s_look.font]);
   s_font_name = fonts_get_system_font(FONT_NAME[s_look.font]);
   s_name_h = NAME_H[s_look.font];
+  if (s_look.font) { s_font_mtitle = fonts_get_system_font(FONT_MTITLE[s_look.font]); s_font_msub = fonts_get_system_font(FONT_MSUB[s_look.font]); }
   for (int i = 0; i < s_msg_count; i++) measure(&s_msgs[i]);
   if (s_menu) { menu_layer_set_normal_colors(s_menu, BG, FG); menu_layer_set_highlight_colors(s_menu, FG, BG); main_reload(); }
-  if (s_pick_menu) { menu_layer_set_normal_colors(s_pick_menu, BG, FG); menu_layer_set_highlight_colors(s_pick_menu, FG, BG); menu_layer_reload_data(s_pick_menu); }
+  if (s_pick_menu) { menu_layer_set_normal_colors(s_pick_menu, BG, FG); menu_layer_set_highlight_colors(s_pick_menu, FG, BG); pick_callbacks(); menu_layer_reload_data(s_pick_menu); }
   if (s_chat_win) {
     window_set_background_color(s_chat_win, BG);
     text_layer_set_background_color(s_banner, FG); text_layer_set_text_color(s_banner, BG);
