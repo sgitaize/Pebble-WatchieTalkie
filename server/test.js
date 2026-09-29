@@ -216,6 +216,20 @@ async function main() {
   ok(r.status === 200 && r.body.cfg.push === 'pushover' && r.body.cfg.poUser.length === 30, 'Pushover gespeichert');
   r = await api('PUT', '/v1/me', { cfg: { push: '', ntfy: '', ntfyUrl: '', poUser: '', poToken: '' } }, tc);
   ok(r.status === 200 && r.body.cfg.push === '' && r.body.cfg.ntfy === '' && r.body.cfg.ntfyUrl === '', 'Handy-Benachrichtigung ausgeschaltet');
+  // Ruhefenster + Pause per Uhr-Taste
+  r = await api('PUT', '/v1/me', { cfg: { pushGap: 10, pauseMin: 30 } }, tc);
+  ok(r.status === 200 && r.body.cfg.pushGap === 10 && r.body.cfg.pauseMin === 30 && r.body.pauseLeft === 0, 'Ruhefenster + Pausendauer gespeichert');
+  r = await api('PUT', '/v1/me', { cfg: { pushGap: 9999, pauseMin: -5 } }, tc);
+  ok(r.body.cfg.pushGap === 240 && r.body.cfg.pauseMin === 1, 'Ruhefenster/Pause begrenzt');
+  await api('PUT', '/v1/me', { cfg: { pauseMin: 30 } }, tc);
+  r = await api('POST', '/v1/me/pause', { on: true }, tc);
+  ok(r.status === 200 && r.body.pauseLeft === 30, 'Push-Pause gestartet (Standarddauer)');
+  r = await api('POST', '/v1/me/pause', { on: true, min: 5 }, tc);
+  ok(r.body.pauseLeft === 5, 'Push-Pause mit eigener Dauer');
+  r = await api('POST', '/v1/me/pause', { on: false }, tc);
+  ok(r.body.pauseLeft === 0, 'Push-Pause beendet');
+  r = await api('POST', '/v1/me/pause', { on: true });
+  ok(r.status === 401, 'Push-Pause nur mit Token');
 
   // Austritt, Kontakt entfernen, Konto löschen
   r = await api('DELETE', '/v1/groups/' + gid, null, tb);

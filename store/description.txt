@@ -9,7 +9,7 @@ WatchieTalkie2 continues the original Watchie-Talkie app, which has been offline
 • History: last 50 messages per chat, kept for 30 days
 • End-to-end encryption (NaCl): the server operator cannot read your messages
 • Optional: notifications even when the app is closed, via ntfy (free, also your own server), your own Telegram bot or Pushover – see below
-• Radio beep on new messages on watches with speaker (Time 2, Pebble 2 Duo, Round 2) – silent during Quiet Time, hold SELECT in the list to mute
+• Radio beep on new messages on watches with speaker (Time 2, Pebble 2 Duo, Round 2) – silent during Quiet Time, hold SELECT in the list to mute it or to pause phone notifications
 • Respects Quiet Time: no vibration, no beep
 • Battery-friendly: long polling only while the app is open, no background activity
 • Every Pebble: Pebble/Steel, Time, Time Steel, Time Round, Pebble 2, Time 2, Pebble 2 Duo, Round 2

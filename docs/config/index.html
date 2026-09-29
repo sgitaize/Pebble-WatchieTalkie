@@ -108,7 +108,7 @@
     <section>
       <h2>Watch</h2>
       <div class="check"><input type="checkbox" id="vibe"><label for="vibe" style="margin:0;color:inherit">Vibrate on new message (app open, not during Quiet Time)</label></div>
-      <div class="check"><input type="checkbox" id="beep"><label for="beep" style="margin:0;color:inherit">Radio beep on new message (watches with speaker: Time 2, Pebble 2 Duo, Round 2). Never during Quiet Time; on the watch, hold SELECT in the chat list to switch it on/off.</label></div>
+      <div class="check"><input type="checkbox" id="beep"><label for="beep" style="margin:0;color:inherit">Radio beep on new message (watches with speaker: Time 2, Pebble 2 Duo, Round 2). Never during Quiet Time; on the watch: hold SELECT in the chat list → "Beep on/off".</label></div>
       <div class="check"><input type="checkbox" id="notify"><label for="notify" style="margin:0;color:inherit">Notify when the app is closed</label></div>
       <p class="muted" id="timelineInfo"></p>
       <div id="pushBox">
@@ -144,6 +144,28 @@
           <input type="password" id="poUser" autocomplete="off">
           <div id="poTokenBox"><label for="poToken">API token of your application</label>
           <input type="password" id="poToken" autocomplete="off"></div>
+        </div>
+        <div id="pushTiming" class="hidden">
+          <label for="pushGap">After a notification, further ones</label>
+          <select id="pushGap">
+            <option value="0">for every message</option>
+            <option value="2">not within 2 min</option>
+            <option value="5">not within 5 min</option>
+            <option value="10">not within 10 min</option>
+            <option value="15">not within 15 min</option>
+            <option value="30">not within 30 min</option>
+            <option value="60">not within 1 hour</option>
+          </select>
+          <label for="pauseMin">Pause from the watch for</label>
+          <select id="pauseMin">
+            <option value="5">5 min</option>
+            <option value="10">10 min</option>
+            <option value="15">15 min</option>
+            <option value="30">30 min</option>
+            <option value="60">1 hour</option>
+            <option value="120">2 hours</option>
+          </select>
+          <p class="muted">On the watch: hold SELECT (chat list or chat) → "Pause push". Handy when you open the app after the first notification anyway. Contact requests also wait during a pause.</p>
         </div>
         <p class="muted hidden" id="pushAllow">Last step: in the Pebble app, allow notifications from this app, then test with "In 15 s" below and close the app on the watch.</p>
       </div>
@@ -298,6 +320,8 @@ function render() {
     $('ntfyUrl').value = me.cfg.ntfyUrl || '';
     $('poUser').value = me.cfg.poUser || '';
     $('poToken').value = me.cfg.poToken || '';
+    $('pushGap').value = String(me.cfg.pushGap || 0);
+    $('pauseMin').value = String(me.cfg.pauseMin || 15);
   }
   $('ntfyUrl').placeholder = srv.ntfy || 'https://ntfy.sh';
   $('poTokenStep').classList.toggle('hidden', !!srv.pushoverToken);
@@ -311,6 +335,7 @@ function pushShow() {
   $('pushNtfy').classList.toggle('hidden', v !== 'ntfy');
   $('pushTelegram').classList.toggle('hidden', v !== 'telegram');
   $('pushPushover').classList.toggle('hidden', v !== 'pushover');
+  $('pushTiming').classList.toggle('hidden', !v);
   $('pushAllow').classList.toggle('hidden', !v);
   const srv = $('ntfyUrl').value.trim() || $('ntfyUrl').placeholder;
   $('ntfyServerHint').textContent = /^https:\/\/ntfy\.sh\/?$/.test(srv) ? '' : '(server: ' + srv + ')';
@@ -384,7 +409,8 @@ const saveCfg = () => {
   return api('PUT', '/v1/me', { cfg: { qr, vibe: $('vibe').checked, notify: $('notify').checked, beep: $('beep').checked,
     push: $('push').value === 'telegram' && !(me && me.cfg.tgChat) ? '' : $('push').value,
     ntfy: $('push').value === 'ntfy' ? $('ntfyTopic').value : (me && me.cfg.ntfy) || '', ntfyUrl: $('ntfyUrl').value.trim(),
-    poUser: $('poUser').value.trim(), poToken: $('poToken').value.trim() } });
+    poUser: $('poUser').value.trim(), poToken: $('poToken').value.trim(),
+    pushGap: +$('pushGap').value, pauseMin: +$('pauseMin').value } });
 };
 const sendTest = (delay) => async () => {
   try { await saveCfg(); await api('POST', '/v1/test', { delay }); flash(delay ? 'Test message comes in ' + delay + ' s – close the app on the watch now' : 'Test message sent – look at your watch', true); } catch (e) { flash(e.message); }
@@ -392,7 +418,7 @@ const sendTest = (delay) => async () => {
 $('testNow').onclick = sendTest(0);
 $('testLater').onclick = sendTest(15);
 $('qr').oninput = () => { $('qr').dataset.touched = '1'; };
-$('push').onchange = $('ntfyUrl').oninput = $('poUser').oninput = $('poToken').oninput = () => { $('push').dataset.touched = '1'; pushShow(); };
+$('pushGap').onchange = $('pauseMin').onchange = $('push').onchange = $('ntfyUrl').oninput = $('poUser').oninput = $('poToken').oninput = () => { $('push').dataset.touched = '1'; pushShow(); };
 $('ntfyNew').onclick = () => { $('push').dataset.touched = '1'; $('ntfyTopic').value = ntfyNewTopic(); };
 $('tgConnect').onclick = async () => {
   try { await act('POST', '/v1/me/telegram', { bot: $('tgBot').value.trim() }, 'Telegram connected')(); $('tgBot').value = ''; } catch (e) { flash(e.message); }

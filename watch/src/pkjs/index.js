@@ -8,7 +8,7 @@ E2E.init({ get: function (k) { return localStorage.getItem(k); }, set: function 
 var DEFAULT_SERVER = 'https://watchietalkie.aize-it.de';
 var CONFIG_URL = 'https://sgitaize.github.io/Pebble-WatchieTalkie/config/';
 var C = { LIST_ITEM: 2, MSG_ITEM: 5, NEW_MSG: 7, QR_ITEM: 8, STATUS: 9, SENT: 10,
-  READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25, SEND_VOICE: 26, TEST: 27, BEEP: 28, DELETE: 29 };
+  READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25, SEND_VOICE: 26, TEST: 27, BEEP: 28, DELETE: 29, PAUSE: 30, PUSH: 11 };
 var SYS_CID = 'u.watchietalkie';     // System-Chat des Servers (Testnachrichten, nur lesbar)
 var K = { CHAT: 0, CONTACT_INVITE: 1, GROUP_INVITE: 2 };
 
@@ -101,8 +101,24 @@ function retryDone(key) { var r = retries[key]; if (r) { clearTimeout(r.t); r.t 
 function sendQuickReplies() {
   var qr = (me && me.cfg && me.cfg.qr) || [];
   var vibe = (!me || !me.cfg || me.cfg.vibe !== false ? 1 : 0) | (!me || !me.cfg || me.cfg.beep !== false ? 2 : 0);
-  if (!qr.length) { toWatch({ CMD: C.QR_ITEM, IDX: 0, COUNT: 0, FLAGS: vibe }); return; }
+  if (!qr.length) toWatch({ CMD: C.QR_ITEM, IDX: 0, COUNT: 0, FLAGS: vibe });
   for (var i = 0; i < qr.length && i < 10; i++) toWatch({ CMD: C.QR_ITEM, IDX: i, COUNT: qr.length, TEXT: trunc(qr[i], 60), FLAGS: vibe });
+  sendPush();
+}
+/* Stand der Handy-Benachrichtigung an die Uhr: eingerichtet?, Restminuten der Pause, Pausendauer */
+function sendPush() {
+  var c = (me && me.cfg) || {};
+  var push = c.push !== undefined ? c.push : (c.ntfy ? 'ntfy' : '');
+  toWatch({ CMD: C.PUSH, FLAGS: push && c.notify !== false ? 1 : 0, IDX: (me && me.pauseLeft) || 0, COUNT: c.pauseMin || 15 });
+}
+/* Handy-Benachrichtigungen pausieren/fortsetzen (Menü auf der Uhr) */
+function setPause(on) {
+  if (!token) return;
+  api('POST', '/v1/me/pause', { on: on }, function (err, r) {
+    if (err) return status(errText(err));
+    me = r;
+    sendPush();
+  });
 }
 
 /* Schlüssel der Kontakte holen; geänderte Schlüssel melden (möglicher Angriff oder neues Handy des Kontakts) */
@@ -335,6 +351,7 @@ Pebble.addEventListener('appmessage', function (e) {
   else if (cmd === C.TEST) requestTest();
   else if (cmd === C.BEEP) setBeep(p.TEXT === '1');
   else if (cmd === C.DELETE) deleteLast(cid);
+  else if (cmd === C.PAUSE) setPause(p.TEXT === '1');
 });
 
 Pebble.addEventListener('showConfiguration', function () {

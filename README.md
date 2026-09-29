@@ -14,7 +14,7 @@ WatchieTalkie2 is a **continuation of the former [Watchie-Talkie](https://apps.r
 - **End-to-end encryption:** the server operator cannot read messages
 - **Notifications while the app is closed (optional)** via [ntfy](https://ntfy.sh) (including your own server), your own Telegram bot, or [Pushover](https://pushover.net) – see [Why a phone notification?](#why-a-phone-notification)
 - **All Pebble models:** Pebble / Steel (aplite), Time / Time Steel (basalt), Time Round (chalk), Pebble 2 (diorite), Time 2 (emery), Pebble 2 Duo (flint), Round 2 (gabbro)
-- **Radio beep** for new messages through the speaker (Time 2, Pebble 2 Duo, Round 2; can be turned off – on the watch via long SELECT in the list; in Quiet Time there is neither beep nor vibration)
+- **Radio beep** for new messages through the speaker (Time 2, Pebble 2 Duo, Round 2; can be turned off – on the watch: long SELECT in the list → Beep on/off; in Quiet Time there is neither beep nor vibration)
 - **Battery-friendly:** long polling only while the app is open (a request waits up to 25 s and returns immediately when something new arrives), no background activity otherwise
 - **Lightweight server:** Node.js with no dependencies, a single file, JSON storage; info page with statistics (users, messages, how many dictated); Docker supported
 
@@ -26,6 +26,8 @@ A Pebble app cannot listen for messages while it is closed. In the past a server
 | [ntfy](https://ntfy.sh) | free, open source | subscribe to the topic from the settings page in the ntfy app; your own ntfy server (https) is possible |
 | Telegram | free | create your own bot with @BotFather, send it "/start", enter the bot token → "Connect" (the server fetches the chat ID) |
 | [Pushover](https://pushover.net) | one-time purchase after 30 days | enter your user key + the API token of your own Pushover application (the server operator can provide one for everyone via `PUSHOVER_TOKEN`) |
+
+Optional in the settings: no further notification within X minutes after one, and a pause from the watch (long SELECT in the list or a chat → **Pause push**, e.g. 15 min) – handy when you open the app after the first notification anyway.
 
 Then allow notifications for this app in the Pebble app. **Entirely optional:** without ntfy, messages arrive as soon as the app is open on the watch. For the server it is just one HTTPS request per message, no extra software. Bot tokens and Pushover keys are stored in plain text in `data/db.json` (treat it like credentials).
 

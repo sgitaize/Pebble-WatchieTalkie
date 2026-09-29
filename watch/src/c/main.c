@@ -5,14 +5,14 @@
 #include <pebble.h>
 
 /* Befehle pkjs → Uhr */
-enum { C_LIST_ITEM = 2, C_MSG_ITEM = 5, C_NEW_MSG = 7, C_QR_ITEM = 8, C_STATUS = 9, C_SENT = 10 };
+enum { C_LIST_ITEM = 2, C_MSG_ITEM = 5, C_NEW_MSG = 7, C_QR_ITEM = 8, C_STATUS = 9, C_SENT = 10, C_PUSH = 11 };
 /* Befehle Uhr → pkjs */
-enum { C_READY = 20, C_OPEN = 21, C_SEND = 22, C_CLOSE = 23, C_ACCEPT = 24, C_DECLINE = 25, C_SEND_VOICE = 26, C_TEST = 27, C_BEEP = 28, C_DELETE = 29 };
+enum { C_READY = 20, C_OPEN = 21, C_SEND = 22, C_CLOSE = 23, C_ACCEPT = 24, C_DECLINE = 25, C_SEND_VOICE = 26, C_TEST = 27, C_BEEP = 28, C_DELETE = 29, C_PAUSE = 30 };
 /* Art eines Listeneintrags */
 enum { K_CHAT = 0, K_CONTACT_INVITE = 1, K_GROUP_INVITE = 2 };
 /* Auswahlmenü – mode 0: Schnellantworten + „Emoji …“ + „Letzte Nachricht löschen“ · 1: Einladung annehmen/ablehnen
-   2: Emoji wählen · 3: Löschen bestätigen */
-enum { P_REPLY = 0, P_INVITE = 1, P_EMOJI = 2, P_DELETE = 3 };
+   2: Emoji wählen · 3: Löschen bestätigen · 4: Liste (Push pausieren, Piep an/aus) */
+enum { P_REPLY = 0, P_INVITE = 1, P_EMOJI = 2, P_DELETE = 3, P_LIST = 4 };
 
 #if defined(PBL_PLATFORM_APLITE)
 #define MAX_MSGS 10
@@ -43,10 +43,10 @@ static Chat s_chats[MAX_CHATS];
 static int s_chat_count;
 /* Texte (nur Englisch) */
 enum { T_LOADING, T_EMPTY_CHAT, T_EMOJI, T_ACCEPT, T_DECLINE, T_CONTACT_REQ, T_GROUP_INV, T_NO_VOICE, T_NEW_FROM, T_SEND_FAILED,
-  T_DELETE_LAST, T_DELETE_YES, T_CANCEL };
+  T_DELETE_LAST, T_DELETE_YES, T_CANCEL, T_PAUSE, T_RESUME, T_BEEP_ON, T_BEEP_OFF };
 static const char *T_EN[] = { "Loading …", "No messages yet.\nSELECT: speak\nhold SELECT: quick reply, emoji", "Emoji …",
   "Accept", "Decline", "Contact request", "Group invitation", "Voice not available", "New from %s", "Sending failed",
-  "Delete my last message", "Yes, delete it", "Cancel" };
+  "Delete my last message", "Yes, delete it", "Cancel", "Pause push", "Resume push", "Beep on", "Beep off" };
 #define TR(i) (T_EN[i])
 static char s_status[160] = "…";
 
@@ -61,6 +61,11 @@ static char *s_qr[MAX_QR];
 static int s_qr_count;
 static bool s_vibe = true;
 static bool s_beep = true;
+/* Handy-Benachrichtigung (ntfy/Telegram/Pushover): eingerichtet? pausiert bis? Pausendauer in Minuten */
+static bool s_push_avail;
+static time_t s_pause_until;
+static int s_pause_min = 15;
+static bool paused(void) { return s_pause_until > time(NULL); }
 
 /* Funk-Piep („Roger“) bei neuer Nachricht – nur Uhren mit Lautsprecher (Time 2, Pebble 2 Duo, Round 2).
    Ältere Modelle laufen mit Firmware ohne Lautsprecher-Funktionen, dort wird nichts aufgerufen.
@@ -314,14 +319,34 @@ static const char *EMOJI[][3] = {
 };
 static int s_pick_mode;
 static Chat s_pick_chat;
+#if defined(HAS_SPEAKER)
+#define BEEP_ROWS 1
+#else
+#define BEEP_ROWS 0
+#endif
+/* Zeilen hinter Schnellantworten/Emoji/Löschen bzw. im Listenmenü: optional „Pause push“, im Listenmenü noch Piep */
+static int pick_extra_start(void) {
+  if (s_pick_mode == P_LIST) return 0;
+  return s_qr_count + (strcmp(s_open_chat, "u.watchietalkie") ? 2 : 0);   /* System-Chat: nur lesbar */
+}
 static uint16_t pick_rows(MenuLayer *m, uint16_t s, void *ctx) {
   if (s_pick_mode == P_INVITE || s_pick_mode == P_DELETE) return 2;
   if (s_pick_mode == P_EMOJI) return ARRAY_LENGTH(EMOJI);
-  return s_qr_count + (strcmp(s_open_chat, "u.watchietalkie") ? 2 : 0);   /* System-Chat: nur lesbar */
+  return pick_extra_start() + (s_push_avail ? 1 : 0) + (s_pick_mode == P_LIST ? BEEP_ROWS : 0);
 }
 static void pick_draw(GContext *ctx, const Layer *cell, MenuIndex *idx, void *data) {
   int r = idx->row;
   if (s_pick_mode == P_EMOJI) { menu_cell_basic_draw(ctx, cell, EMOJI[r][1], EMOJI[r][2], NULL); return; }
+  int x = r - pick_extra_start();
+  if (s_pick_mode == P_LIST || (s_pick_mode == P_REPLY && x >= 0)) {
+    if (s_push_avail && x == 0) {
+      static char sub[20];
+      if (paused()) { struct tm *t = localtime(&s_pause_until); strftime(sub, sizeof(sub), clock_is_24h_style() ? "paused until %H:%M" : "paused until %I:%M", t); }
+      else snprintf(sub, sizeof(sub), "for %d min", s_pause_min);
+      menu_cell_basic_draw(ctx, cell, TR(paused() ? T_RESUME : T_PAUSE), sub, NULL);
+    } else menu_cell_basic_draw(ctx, cell, TR(s_beep ? T_BEEP_OFF : T_BEEP_ON), NULL, NULL);
+    return;
+  }
   const char *t = s_pick_mode == P_INVITE ? TR(r == 0 ? T_ACCEPT : T_DECLINE)
                 : s_pick_mode == P_DELETE ? TR(r == 0 ? T_DELETE_YES : T_CANCEL)
                 : r < s_qr_count ? s_qr[r] : TR(r == s_qr_count ? T_EMOJI : T_DELETE_LAST);
@@ -338,9 +363,22 @@ static void pick_send(const char *shown, const char *text) {
   chat_relayout(true);
   send_cmd(C_SEND, s_open_chat, text);
 }
+static void main_reload(void);
 static void pick_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
-  int r = idx->row;
-  if (s_pick_mode == P_INVITE) {
+  int r = idx->row, x = r - pick_extra_start();
+  if ((s_pick_mode == P_LIST || s_pick_mode == P_REPLY) && x >= 0) {
+    if (s_push_avail && x == 0) {                 /* Push pausieren / fortsetzen – Server bestätigt per C_PUSH */
+      bool on = !paused();
+      s_pause_until = on ? time(NULL) + s_pause_min * 60 : 0;
+      send_cmd(C_PAUSE, NULL, on ? "1" : "0");
+      vibes_short_pulse();
+    } else {                                      /* Piep an/aus (wie auf der Einstellungsseite) */
+      s_beep = !s_beep;
+      send_cmd(C_BEEP, NULL, s_beep ? "1" : "0");
+      if (s_beep) roger_beep();
+    }
+    main_reload();
+  } else if (s_pick_mode == P_INVITE) {
     send_cmd(r == 0 ? C_ACCEPT : C_DECLINE, s_pick_chat.id, NULL);
     snprintf(s_status, sizeof(s_status), "%s", TR(T_LOADING));
   } else if (s_pick_mode == P_EMOJI) {
@@ -431,23 +469,16 @@ static void main_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
   if (c->kind == K_CHAT) chat_open(c);
   else { s_pick_chat = *c; pick_open(P_INVITE); }
 }
-#if defined(HAS_SPEAKER)
+/* Langes SELECT in der Liste: kleines Menü (Push pausieren, Piep an/aus) – nur wenn es etwas zu wählen gibt */
 static void main_long_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
-  s_beep = !s_beep;
-  vibes_short_pulse();
-  send_cmd(C_BEEP, NULL, s_beep ? "1" : "0");
-  menu_layer_reload_data(m);
-  if (s_beep) roger_beep();
+  if (s_push_avail || BEEP_ROWS) pick_open(P_LIST);
 }
-#endif
 static void main_load(Window *w) {
   Layer *root = window_get_root_layer(w);
   s_menu = menu_layer_create(layer_get_bounds(root));
   menu_layer_set_callbacks(s_menu, NULL, (MenuLayerCallbacks) {
     .get_num_rows = main_rows, .get_cell_height = main_row_h, .draw_row = main_draw, .select_click = main_select,
-#if defined(HAS_SPEAKER)
     .select_long_click = main_long_select,
-#endif
     .get_header_height = main_header_h, .draw_header = main_header });
 #if defined(PBL_COLOR)
   menu_layer_set_highlight_colors(s_menu, ACCENT, GColorWhite);
@@ -543,6 +574,13 @@ static void inbox(DictionaryIterator *it, void *ctx) {
         if (s_chat_loading || s_chat_failed) { s_chat_failed = true; chat_relayout(false); }   /* Fehler bleibt sichtbar, bis Nachrichten kommen */
         else banner_show(s_status);
       }
+      main_reload();
+      break;
+    case C_PUSH:                                  /* FLAGS: Push eingerichtet · IDX: Pause-Restminuten · COUNT: Pausendauer */
+      s_push_avail = num(it, MESSAGE_KEY_FLAGS) & 1;
+      s_pause_until = idx > 0 ? time(NULL) + idx * 60 : 0;
+      if (count > 0) s_pause_min = count;
+      if (s_pick_menu) menu_layer_reload_data(s_pick_menu);
       main_reload();
       break;
     case C_SENT:

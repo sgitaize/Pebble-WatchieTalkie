@@ -46,7 +46,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.8.0';
+const VERSION = '1.9.0';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -172,7 +172,8 @@ function meView(u) {
   return { name: u.name, aliases: (u.aliases || []).slice(), cfg: u.cfg, contacts: c.ok.sort(), invitesOut: c.out.sort(), invitesIn: c.in.sort(), blocked: u.blocked.slice().sort(),
     groups: u.groups.filter((g) => db.groups[g]).map((g) => groupView(db.groups[g])),
     groupInvites: u.ginv.filter((g) => db.groups[g]).map((g) => groupView(db.groups[g])),
-    timeline: !!u.tl, pubKey: u.pk || '', server: serverInfo() };
+    timeline: !!u.tl, pubKey: u.pk || '', server: serverInfo(),
+    pauseLeft: Math.max(0, Math.ceil(((u.pushOff || 0) - now()) / 60000)) };   // Minuten, bis die Push-Pause endet
 }
 /* Nachricht für einen Leser: nur sein eigener Schlüsselumschlag */
 function msgView(m, reader) {
@@ -231,11 +232,14 @@ function notifyClosed(r, u, a, msg) {
   if (r.cfg.notify === false) return;
   const title = a.group ? a.group.title + ': ' + u.name : u.name;
   if (r.tl) pushPin(r, title, msg);
-  pushPhone(r, 'New message: ' + title);
+  /* Ruhefenster (cfg.pushGap Minuten): nach einer Handy-Benachrichtigung keine weitere für Nachrichten */
+  if (a.sys) return pushPhone(r, 'New message: ' + title);                 // Testnachricht: Ruhefenster gilt nicht
+  if (r.cfg.pushGap && now() - (r.pushLast || 0) < r.cfg.pushGap * 60000) return;
+  if (pushPhone(r, 'New message: ' + title)) r.pushLast = now();
 }
 /* Nur Handy-Benachrichtigung (z. B. Kontaktanfrage) über den gewählten Dienst */
 function pushPhone(r, text) {
-  if (r.cfg.notify === false) return;
+  if (r.cfg.notify === false || (r.pushOff || 0) > now()) return false;   // pushOff: Pause per Taste auf der Uhr
   const c = r.cfg;
   const push = c.push !== undefined ? c.push : (c.ntfy ? 'ntfy' : '');   // Konten aus 1.3.0 kannten nur ntfy
   if (push === 'ntfy' && c.ntfy && NTFY_URL !== 'off')
@@ -248,6 +252,8 @@ function pushPhone(r, text) {
     httpsPost('Pushover', r, 'https://api.pushover.net/1/messages.json',
       new URLSearchParams({ token: c.poToken || PUSHOVER_TOKEN, user: c.poUser, title: 'WatchieTalkie2', message: text }).toString(),
       { 'Content-Type': 'application/x-www-form-urlencoded' });
+  else return false;
+  return true;
 }
 function httpsPost(what, r, url, body, headers) {
   if (!pushBudget()) return;
@@ -391,6 +397,9 @@ route('PUT', /^\/v1\/me$/, true, (req, b, u) => {
     if (typeof c.vibe === 'boolean') u.cfg.vibe = c.vibe;
     if (typeof c.notify === 'boolean') u.cfg.notify = c.notify;
     if (typeof c.beep === 'boolean') u.cfg.beep = c.beep;
+    const mins = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(v)));
+    if (Number.isFinite(c.pushGap)) u.cfg.pushGap = mins(c.pushGap, 0, 240);        // 0 = jede Nachricht
+    if (Number.isFinite(c.pauseMin)) u.cfg.pauseMin = mins(c.pauseMin, 1, 480);     // Dauer der Pause per Taste
     if (typeof c.push === 'string') {
       if (!['', 'ntfy', 'telegram', 'pushover'].includes(c.push)) fail(400, 'Unbekannter Benachrichtigungsdienst');
       u.cfg.push = c.push;
@@ -430,6 +439,14 @@ route('PUT', /^\/v1\/me$/, true, (req, b, u) => {
     if (!B64.test(b.pubKey) || b.pubKey.length !== 44) fail(400, 'Ungültiger öffentlicher Schlüssel');
     if (b.pubKey !== u.pk) { u.pk = b.pubKey; u.pkTs = now(); }
   }
+  save();
+  return meView(u);
+});
+
+/* Handy-Benachrichtigungen pausieren (Taste auf der Uhr): {on:true[, min]} für cfg.pauseMin Minuten, {on:false} beendet */
+route('POST', /^\/v1\/me\/pause$/, true, (req, b, u) => {
+  const min = Number.isFinite(b.min) ? Math.min(480, Math.max(1, Math.round(b.min))) : (u.cfg.pauseMin || 15);
+  u.pushOff = b.on === false ? 0 : now() + min * 60000;
   save();
   return meView(u);
 });
