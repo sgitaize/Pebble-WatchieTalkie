@@ -167,6 +167,18 @@ async function main() {
   r = await api('GET', '/v1/poll?wait=5&since=' + (seqT + 1), null, tc);
   ok(r.body.msgs.some((x) => x.chat === 'u.watchietalkie'), 'verzögerte Testnachricht weckt Long-Poll');
 
+  // ntfy (optional): Thema + eigener Server prüfen
+  r = await api('PUT', '/v1/me', { cfg: { ntfy: 'zu-kurz' } }, tc);
+  ok(r.status === 400, 'ntfy: zu kurzes Thema abgelehnt');
+  r = await api('PUT', '/v1/me', { cfg: { ntfyUrl: 'https://127.0.0.1' } }, tc);
+  ok(r.status === 400, 'ntfy: IP-Adresse als Server abgelehnt');
+  r = await api('PUT', '/v1/me', { cfg: { ntfyUrl: 'http://ntfy.example.org' } }, tc);
+  ok(r.status === 400, 'ntfy: http abgelehnt');
+  r = await api('PUT', '/v1/me', { cfg: { ntfy: 'wt-abcdefghijkl', ntfyUrl: 'https://ntfy.example.org/' } }, tc);
+  ok(r.status === 200 && r.body.cfg.ntfy === 'wt-abcdefghijkl' && r.body.cfg.ntfyUrl === 'https://ntfy.example.org', 'ntfy: Thema + Server gespeichert');
+  r = await api('PUT', '/v1/me', { cfg: { ntfy: '', ntfyUrl: '' } }, tc);
+  ok(r.status === 200 && r.body.cfg.ntfy === '' && r.body.cfg.ntfyUrl === '', 'ntfy: ausgeschaltet');
+
   // Austritt, Kontakt entfernen, Konto löschen
   r = await api('DELETE', '/v1/groups/' + gid, null, tb);
   ok(r.body.groups.length === 0, 'Gruppe verlassen');

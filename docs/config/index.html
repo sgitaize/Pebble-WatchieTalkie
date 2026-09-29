@@ -104,8 +104,23 @@
       <h2>Watch</h2>
       <div class="check"><input type="checkbox" id="vibe"><label for="vibe" style="margin:0;color:inherit">Vibrate on new message (app open)</label></div>
       <div class="check"><input type="checkbox" id="beep"><label for="beep" style="margin:0;color:inherit">Radio beep on new message (watches with speaker: Time 2, Pebble 2 Duo, Round 2)</label></div>
-      <div class="check"><input type="checkbox" id="notify"><label for="notify" style="margin:0;color:inherit">Notify when the app is closed (timeline)</label></div>
+      <div class="check"><input type="checkbox" id="notify"><label for="notify" style="margin:0;color:inherit">Notify when the app is closed</label></div>
       <p class="muted" id="timelineInfo"></p>
+      <div id="ntfyBox">
+        <h2>Phone notification via ntfy (optional)</h2>
+        <p class="muted">Why? A Pebble watch app cannot listen for messages while it is closed, and the new Pebble app (Core) does not deliver timeline notifications from servers. So the only way to get a buzz while WatchieTalkie2 is closed is a normal phone notification, which the Pebble app forwards to your watch. For that the server uses the free, open-source <a href="https://ntfy.sh">ntfy</a> app (iOS and Android). Totally optional: without it, new messages still arrive whenever the app is open on the watch.</p>
+        <div class="check"><input type="checkbox" id="ntfyOn"><label for="ntfyOn" style="margin:0;color:inherit">Send me a phone notification via ntfy</label></div>
+        <div id="ntfySetup" class="hidden">
+          <p class="muted">1. Install ntfy: <a href="https://apps.apple.com/app/ntfy/id1625396347">iPhone</a> · <a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy">Android</a><br>
+            2. In ntfy tap "+" and subscribe to this topic <span id="ntfyServerHint"></span>:</p>
+          <p class="row"><input type="text" id="ntfyTopic" readonly><button id="ntfyCopy">Copy</button><button id="ntfyNew">New</button></p>
+          <p class="muted">3. In the Pebble app, allow notifications from ntfy.<br>
+            4. Test with "In 15 s" below and close the app on the watch.</p>
+          <p class="muted">The topic works like a password: anyone who knows it can read these notices, so keep it to yourself. ntfy only ever sees "New message: &lt;sender&gt;", never the message itself (that stays end-to-end encrypted).</p>
+          <label for="ntfyUrl">Own ntfy server (optional, https)</label>
+          <input type="url" id="ntfyUrl" placeholder="https://ntfy.sh">
+        </div>
+      </div>
       <h2>Test message</h2>
       <p class="muted">The server sends you a message in the chat "WatchieTalkie". "In 15 s": save, close the app on the watch and check the notification.</p>
       <p class="row"><button id="testNow">Send now</button><button id="testLater">In 15 s</button></p>
@@ -230,8 +245,27 @@ function render() {
   $('notify').checked = me.cfg.notify !== false;
   $('beep').checked = me.cfg.beep !== false;
   $('timelineInfo').textContent = me.timeline
-    ? 'Your watch is registered for timeline notifications.'
-    : 'No timeline token yet: only works if WatchieTalkie2 was installed from the Pebble app store. The app registers automatically the next time it opens.';
+    ? 'Registered for timeline notifications (works with the Rebble app, not with the new Pebble app – use ntfy below).'
+    : 'With the new Pebble app (Core) notifications need ntfy (below).';
+  const ntfyDefault = (me.server && me.server.ntfy) || '';
+  $('ntfyBox').classList.toggle('hidden', !ntfyDefault);
+  if (!$('ntfyOn').dataset.touched) {
+    $('ntfyOn').checked = !!me.cfg.ntfy;
+    $('ntfyTopic').value = me.cfg.ntfy || $('ntfyTopic').value;
+    $('ntfyUrl').value = me.cfg.ntfyUrl || '';
+  }
+  $('ntfyUrl').placeholder = ntfyDefault;
+  ntfyShow();
+}
+function ntfyShow() {
+  if ($('ntfyOn').checked && !$('ntfyTopic').value) $('ntfyTopic').value = ntfyNewTopic();
+  $('ntfySetup').classList.toggle('hidden', !$('ntfyOn').checked);
+  const srv = $('ntfyUrl').value.trim() || $('ntfyUrl').placeholder;
+  $('ntfyServerHint').textContent = /^https:\/\/ntfy\.sh\/?$/.test(srv) ? '' : '(server: ' + srv + ')';
+}
+function ntfyNewTopic() {
+  const a = 'abcdefghijkmnpqrstuvwxyz23456789';
+  return 'wt-' + [...nacl.randomBytes(20)].map((x) => a[x % 32]).join('');
 }
 
 async function loadServer() {
@@ -286,18 +320,26 @@ $('groupBtn').onclick = async () => {
   const members = [...$('groupMembers').querySelectorAll('input:checked')].map((x) => x.value);
   try { await act('POST', '/v1/groups', { title: $('groupTitle').value, members }, 'Group created')(); $('groupTitle').value = ''; } catch (e) { flash(e.message); }
 };
+const saveCfg = () => {
+  const qr = $('qr').value.split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 10);
+  return api('PUT', '/v1/me', { cfg: { qr, vibe: $('vibe').checked, notify: $('notify').checked, beep: $('beep').checked,
+    ntfy: $('ntfyOn').checked && !$('ntfyBox').classList.contains('hidden') ? $('ntfyTopic').value : '', ntfyUrl: $('ntfyUrl').value.trim() } });
+};
 const sendTest = (delay) => async () => {
-  try { await api('POST', '/v1/test', { delay }); flash(delay ? 'Test message comes in ' + delay + ' s – close the app on the watch now' : 'Test message sent – look at your watch', true); } catch (e) { flash(e.message); }
+  try { await saveCfg(); await api('POST', '/v1/test', { delay }); flash(delay ? 'Test message comes in ' + delay + ' s – close the app on the watch now' : 'Test message sent – look at your watch', true); } catch (e) { flash(e.message); }
 };
 $('testNow').onclick = sendTest(0);
 $('testLater').onclick = sendTest(15);
 $('qr').oninput = () => { $('qr').dataset.touched = '1'; };
+$('ntfyOn').onchange = $('ntfyUrl').oninput = () => { $('ntfyOn').dataset.touched = '1'; ntfyShow(); };
+$('ntfyNew').onclick = () => { $('ntfyOn').dataset.touched = '1'; $('ntfyTopic').value = ntfyNewTopic(); };
+$('ntfyCopy').onclick = () => {
+  $('ntfyTopic').select();
+  (navigator.clipboard ? navigator.clipboard.writeText($('ntfyTopic').value) : Promise.reject()).then(() => flash('Topic copied', true), () => document.execCommand('copy'));
+};
 $('saveBtn').onclick = async () => {
   if (me) {
-    try {
-      const qr = $('qr').value.split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 10);
-      await api('PUT', '/v1/me', { cfg: { qr, vibe: $('vibe').checked, notify: $('notify').checked, beep: $('beep').checked } });
-    } catch (e) { return flash(e.message); }
+    try { await saveCfg(); } catch (e) { return flash(e.message); }
   }
   if (token) ensureKeys();
   const seed = b64(nacl.randomBytes(32));

@@ -12,11 +12,14 @@ WatchieTalkie2 ist eine **Weiterführung des früheren [Watchie-Talkie](https://
 - **Direktchats und Gruppen** (bis 20 Mitglieder)
 - **Chat-Historie:** letzte 50 Nachrichten je Chat, höchstens 30 Tage
 - **Ende-zu-Ende-Verschlüsselung:** der Server-Betreiber kann Nachrichten nicht lesen
-- **Benachrichtigung bei geschlossener App** über Timeline-Pins – ohne zusätzliche Handy-App (wenn aus dem Pebble-App-Store installiert)
+- **Benachrichtigung bei geschlossener App (optional) über [ntfy](https://ntfy.sh)** – siehe [Warum ntfy?](#warum-ntfy)
 - **Alle Pebble-Modelle:** Pebble / Steel (aplite), Time / Time Steel (basalt), Time Round (chalk), Pebble 2 (diorite), Time 2 (emery), Pebble 2 Duo (flint), Round 2 (gabbro)
 - **Funk-Piep** bei neuen Nachrichten über den Lautsprecher (Time 2, Pebble 2 Duo, Round 2; abschaltbar)
-- **Akkuschonend:** Long-Polling nur bei offener App (eine Anfrage wartet bis zu 25 s und kommt sofort bei Neuem zurück), sonst Timeline
+- **Akkuschonend:** Long-Polling nur bei offener App (eine Anfrage wartet bis zu 25 s und kommt sofort bei Neuem zurück), sonst keine Hintergrundaktivität
 - **Leichter Server:** Node.js ohne Abhängigkeiten, eine Datei, JSON-Speicher; Info-Seite mit Statistik (Nutzer, Nachrichten, davon diktiert); auch per Docker
+
+## Warum ntfy?
+Eine Pebble-App kann bei geschlossener App nicht auf Nachrichten lauschen. Früher schickte ein Server dafür Timeline-Pins, doch die neue Pebble-App (Core) holt keine Timeline-Pins von Servern ab. Bleibt nur eine normale Handy-Benachrichtigung, die die Pebble-App an die Uhr weiterleitet. Dafür schickt der Server einen kurzen Hinweis („New message: Absender“, nie den Inhalt) an [ntfy](https://ntfy.sh) – freie, quelloffene App für iOS und Android. Einrichtung auf der Einstellungsseite: Haken setzen, Thema in ntfy abonnieren, fertig. **Ganz optional:** Ohne ntfy kommen Nachrichten, sobald die App auf der Uhr offen ist. Für den Server ist das nur eine HTTPS-Anfrage je Nachricht, ohne Zusatzsoftware.
 
 ## Aufbau
 
@@ -46,7 +49,7 @@ Uhr (C) ⇄ AppMessage ⇄ PebbleKit JS (Handy, ver-/entschlüsselt) ⇄ HTTPS/J
 
 - **Zufall:** Die iOS-Umgebung der Pebble-App hat kein `crypto.getRandomValues`. Deshalb erzeugt die Einstellungsseite (echter Browser-Zufall) Schlüssel und einen 32-Byte-Seed; die App leitet daraus mit SHA-512, Zähler und – wo vorhanden – Systemzufall ab.
 - **Sicherheitsnummern:** Die Einstellungsseite zeigt die eigene Nummer und die der Kontakte. Wer sie einmal persönlich vergleicht, schließt aus, dass ein Server-Betreiber falsche Schlüssel unterschiebt. Ändert sich der Schlüssel eines Kontakts, warnt die App.
-- **Nicht verschlüsselt (Metadaten):** Benutzernamen, wer mit wem in Kontakt ist, Gruppennamen und Mitglieder, Zeitpunkt und ungefähre Länge von Nachrichten. Timeline-Benachrichtigungen enthalten nur den Absender, nie den Inhalt.
+- **Nicht verschlüsselt (Metadaten):** Benutzernamen, wer mit wem in Kontakt ist, Gruppennamen und Mitglieder, Zeitpunkt und ungefähre Länge von Nachrichten. Benachrichtigungen (ntfy, Timeline) enthalten nur den Absender, nie den Inhalt; ntfy.sh sieht also Absendername und Thema.
 
 **Schutz vor Manipulation (Server).**
 - Zugang per zufälligem 256-Bit-Geräte-Token; der Server speichert nur dessen SHA-256-Hash.
@@ -87,7 +90,8 @@ docker compose up -d           # Port 3000, Daten im Volume "data"; Einstellunge
 | `MAX_USERS` | 1000 | Obergrenze Konten |
 | `HISTORY_MAX` | 50 | Nachrichten je Chat |
 | `HISTORY_DAYS` | 30 | Nachrichten älter als … Tage werden gelöscht |
-| `TIMELINE_API` | `https://timeline-api.rebble.io` | Timeline-Dienst für Benachrichtigungen, `off` = aus |
+| `TIMELINE_API` | `https://timeline-api.rebble.io` | Timeline-Dienst für Benachrichtigungen (nur Rebble-App), `off` = aus |
+| `NTFY_URL` | `https://ntfy.sh` | vorgeschlagener ntfy-Server für Handy-Benachrichtigungen, `off` = ntfy aus (Nutzer können einen eigenen https-Server eintragen) |
 | `SERVER_NAME` | WatchieTalkie2 | Anzeigename |
 | `DONATE_URL` | Projekt-Spendenlink | Spendenbutton auf der Info-Seite, `off` = ausblenden |
 
@@ -102,7 +106,7 @@ JSON, Anmeldung mit `Authorization: Bearer <Geräte-Token>`. Chat-IDs: `u.<name>
 | GET | `/v1/info` | Server-Infos |
 | GET | `/v1/stats` | öffentliche Zähler: Nutzer, Gruppen, Nachrichten, davon diktiert |
 | POST | `/v1/register` | `{name, code?}` → `{name, token}` |
-| GET / PUT / DELETE | `/v1/me` | Profil, Einstellungen (`cfg`), `pubKey`, `timelineToken`, Konto löschen |
+| GET / PUT / DELETE | `/v1/me` | Profil, Einstellungen (`cfg`, u. a. `ntfy` = Thema, `ntfyUrl` = eigener Server), `pubKey`, `timelineToken`, Konto löschen |
 | GET | `/v1/keys` | öffentliche Schlüssel von Kontakten und Gruppenmitgliedern |
 | POST | `/v1/contacts` | `{name}` einladen (nimmt an, wenn der andere schon eingeladen hat) |
 | POST | `/v1/contacts/:name/accept` | Einladung annehmen |
@@ -115,7 +119,7 @@ JSON, Anmeldung mit `Authorization: Bearer <Geräte-Token>`. Chat-IDs: `u.<name>
 | GET · POST | `/v1/chats/:id/messages` | Historie (`?limit=`) / senden `{e, voice?}` (`voice` zählt nur für die Statistik) |
 | POST | `/v1/chats/:id/read` | `{upTo}` gelesen markieren |
 | GET | `/v1/poll?since=&wait=&invites=` | alles Neue seit Nachrichten-Nummer; mit `wait` (≤ 25 s) Long-Polling |
-| POST | `/v1/test` | `{delay?}` (0–60 s) Testnachricht des Servers im nur lesbaren Chat `u.watchietalkie` (fester Klartext `t`, mit Timeline-Pin) – 5 je 10 min |
+| POST | `/v1/test` | `{delay?}` (0–60 s) Testnachricht des Servers im nur lesbaren Chat `u.watchietalkie` (fester Klartext `t`, mit ntfy/Timeline-Benachrichtigung) – 5 je 10 min |
 
 ## Entwicklung
 

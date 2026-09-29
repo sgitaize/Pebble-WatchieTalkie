@@ -14,6 +14,7 @@
  *   HISTORY_MAX       Nachrichten je Chat (Standard 50)
  *   HISTORY_DAYS      Nachrichten älter als … Tage werden gelöscht (Standard 30)
  *   TIMELINE_API      Timeline-Dienst für Benachrichtigungen (Standard https://timeline-api.rebble.io, "off" = aus)
+ *   NTFY_URL          vorgeschlagener ntfy-Server für Handy-Benachrichtigungen (Standard https://ntfy.sh, "off" = ntfy aus)
  *   SERVER_NAME       Anzeigename des Servers (Standard "WatchieTalkie2")
  *   DONATE_URL        Spendenlink auf der Info-Seite (Standard: Projekt-Spendenlink, "off" = ausblenden)
  */
@@ -43,7 +44,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -53,6 +54,7 @@ const MAX_USERS = Number(process.env.MAX_USERS) || 1000;
 const HISTORY_MAX = Math.min(500, Number(process.env.HISTORY_MAX) || 50);
 const HISTORY_DAYS = Number(process.env.HISTORY_DAYS) || 30;
 const TIMELINE_API = process.env.TIMELINE_API || 'https://timeline-api.rebble.io';
+const NTFY_URL = process.env.NTFY_URL || 'https://ntfy.sh';
 const SERVER_NAME = (process.env.SERVER_NAME || 'WatchieTalkie2').slice(0, 40);
 const DONATE_URL = process.env.DONATE_URL === 'off' ? '' : (process.env.DONATE_URL || 'https://www.paypal.com/donate/?hosted_button_id=LGAZB9PR4YV5L');
 const POLL_WAIT_MAX = 25;      // Sekunden, die /v1/poll auf Neues wartet (Long-Polling spart Akku)
@@ -182,7 +184,8 @@ function cleanEnc(e, names) {
 }
 function groupView(g) { return { id: g.id, title: g.title, owner: g.owner, members: g.members.slice(), invited: g.invited.slice() }; }
 function serverInfo() {
-  return { donate: DONATE_URL, name: SERVER_NAME, version: VERSION, registration: REGISTER_CODE ? 'code' : 'open', historyMax: HISTORY_MAX, historyDays: HISTORY_DAYS, textMax: TEXT_MAX };
+  return { donate: DONATE_URL, name: SERVER_NAME, version: VERSION, registration: REGISTER_CODE ? 'code' : 'open', historyMax: HISTORY_MAX, historyDays: HISTORY_DAYS, textMax: TEXT_MAX,
+    ntfy: NTFY_URL === 'off' ? '' : NTFY_URL };
 }
 
 /* Nachricht speichern und Empfänger benachrichtigen */
@@ -197,7 +200,7 @@ function postMessage(u, a, e, voice) {
   for (const n of a.to) wake(n);
   for (const n of a.to) {
     const r = db.users[n];
-    if (r && r.tl && r.cfg.notify !== false && !r.blocked.includes(u.name)) pushPin(r, u, a, msg);
+    if (r && !r.blocked.includes(u.name)) notifyClosed(r, u, a, msg);
   }
   return msg;
 }
@@ -205,14 +208,40 @@ function postMessage(u, a, e, voice) {
 /* ------------------------------------------------ Timeline-Benachrichtigung -- */
 /* Die Pebble-App liefert je Nutzer einen Timeline-Token (nur bei Installation über den App-Store).
    Damit legt der Server einen Pin mit Benachrichtigung an – die Uhr meldet sich auch bei geschlossener App. */
-let pinsSent = [];
-function pushPin(r, u, a, msg) {
-  if (TIMELINE_API === 'off') return;
+let pushesSent = [];
+function pushBudget() {                        // Notbremse gegen Fluten: höchstens 120 Pushes/min
   const t = now();
-  pinsSent = pinsSent.filter((x) => t - x < 60000);
-  if (pinsSent.length > 120) return;          // Notbremse gegen Fluten
-  pinsSent.push(t);
+  pushesSent = pushesSent.filter((x) => t - x < 60000);
+  if (pushesSent.length > 120) return false;
+  pushesSent.push(t);
+  return true;
+}
+/* Benachrichtigung bei geschlossener App: Timeline-Pin (Rebble-App) und/oder ntfy (Handy-Benachrichtigung).
+   Die Core-App holt keine Timeline-Pins vom Server ab – dort hilft nur ntfy. */
+function notifyClosed(r, u, a, msg) {
+  if (r.cfg.notify === false) return;
   const title = a.group ? a.group.title + ': ' + u.name : u.name;
+  if (r.tl) pushPin(r, title, msg);
+  if (r.cfg.ntfy && NTFY_URL !== 'off') pushNtfy(r, title);
+}
+function pushNtfy(r, title) {
+  if (!pushBudget()) return;
+  const body = 'New message: ' + title;
+  try {
+    const url = new URL((r.cfg.ntfyUrl || NTFY_URL).replace(/\/$/, '') + '/' + r.cfg.ntfy);
+    const req = https.request(url, { method: 'POST', timeout: 10000,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': Buffer.byteLength(body),
+        Title: 'WatchieTalkie2', Tags: 'speech_balloon' } }, (res) => {
+      res.resume();
+      if (res.statusCode >= 300) console.error('ntfy', res.statusCode, 'für', r.name);
+    });
+    req.on('error', (e) => console.error('ntfy', e.message));
+    req.on('timeout', () => req.destroy());
+    req.end(body);
+  } catch (e) { console.error('ntfy', e.message); }
+}
+function pushPin(r, title, msg) {
+  if (TIMELINE_API === 'off' || !pushBudget()) return;
   const layout = { type: 'genericPin', title, body: 'New message', tinyIcon: 'system://images/GENERIC_EMAIL' };
   const pin = { id: 'wt-' + msg.id + '-' + r.name, time: new Date(msg.ts).toISOString(), layout,
     createNotification: { layout: { type: 'genericNotification', title, body: 'New message', tinyIcon: 'system://images/GENERIC_EMAIL' } },
@@ -224,7 +253,7 @@ function pushPin(r, u, a, msg) {
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'X-User-Token': r.tl } }, (res) => {
       res.resume();
       if (res.statusCode === 410 || res.statusCode === 403) { r.tl = ''; save(); }   // Token ungültig → nicht weiter versuchen
-      else if (res.statusCode >= 300) console.error('Timeline', res.statusCode, 'für', r.name);
+      console.log('Timeline', res.statusCode, 'für', r.name);
     });
     req.on('error', (e) => console.error('Timeline', e.message));
     req.on('timeout', () => req.destroy());
@@ -242,7 +271,7 @@ function systemMessage(u, text) {
   if (ch.msgs.length > 10) ch.msgs.splice(0, ch.msgs.length - 10);
   save();
   wake(u.name);
-  if (u.tl && u.cfg.notify !== false) pushPin(u, { name: 'WatchieTalkie' }, a, msg);
+  notifyClosed(u, { name: 'WatchieTalkie' }, a, msg);
   return msg;
 }
 
@@ -317,8 +346,26 @@ route('PUT', /^\/v1\/me$/, true, (req, b, u) => {
     if (typeof c.vibe === 'boolean') u.cfg.vibe = c.vibe;
     if (typeof c.notify === 'boolean') u.cfg.notify = c.notify;
     if (typeof c.beep === 'boolean') u.cfg.beep = c.beep;
+    if (typeof c.ntfy === 'string') {           // ntfy-Thema (wie ein Passwort: wer es kennt, liest mit); leer = aus
+      if (c.ntfy && !/^[A-Za-z0-9_-]{12,64}$/.test(c.ntfy)) fail(400, 'Ungültiges ntfy-Thema (12–64 Zeichen A–Z, 0–9, _ -)');
+      u.cfg.ntfy = c.ntfy;
+    }
+    if (typeof c.ntfyUrl === 'string') {        // eigener ntfy-Server (nur https, kein localhost/IP → kein Zugriff aufs interne Netz)
+      let v = c.ntfyUrl.trim().replace(/\/+$/, '');
+      if (v) {
+        let h; try { const x = new URL(v); h = x.protocol === 'https:' && !x.search && !x.hash && x.hostname; } catch (e) { h = ''; }
+        if (!h || v.length > 200 || net.isIP(h.replace(/^\[|\]$/g, '')) || /^localhost$|\.local$|\.internal$/i.test(h) || !h.includes('.'))
+          fail(400, 'Ungültiger ntfy-Server (https://…)');
+        if (v === NTFY_URL) v = '';
+      }
+      u.cfg.ntfyUrl = v;
+    }
   }
-  if (typeof b.timelineToken === 'string') u.tl = cleanText(b.timelineToken, 128).replace(/[^A-Za-z0-9_-]/g, '');
+  if (typeof b.timelineToken === 'string') {
+    const tl = cleanText(b.timelineToken, 128).replace(/[^A-Za-z0-9_-]/g, '');
+    if (tl !== u.tl) console.log('Timeline-Token', tl ? 'gesetzt' : 'entfernt', 'für', u.name);
+    u.tl = tl;
+  }
   if (typeof b.pubKey === 'string') {
     if (!B64.test(b.pubKey) || b.pubKey.length !== 44) fail(400, 'Ungültiger öffentlicher Schlüssel');
     if (b.pubKey !== u.pk) { u.pk = b.pubKey; u.pkTs = now(); }

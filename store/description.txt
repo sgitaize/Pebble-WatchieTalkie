@@ -8,13 +8,15 @@ WatchieTalkie2 continues the original Watchie-Talkie app, which has been offline
 • Direct chats and groups (up to 20 people)
 • History: last 50 messages per chat, kept for 30 days
 • End-to-end encryption (NaCl): the server operator cannot read your messages
-• Notifications even when the app is closed (timeline)
+• Optional: notifications even when the app is closed, via the free ntfy app (iOS/Android) – see below
 • Radio beep on new messages on watches with speaker (Time 2, Pebble 2 Duo, Round 2)
 • Battery-friendly: long polling only while the app is open, no background activity
 • Every Pebble: Pebble/Steel, Time, Time Steel, Time Round, Pebble 2, Time 2, Pebble 2 Duo, Round 2
 • Open source (MIT) – host your own server with Node.js, no database needed
 
 Getting started: open the app settings in the Pebble app, choose a username and invite friends by their username. On the watch: SELECT = speak, long SELECT = quick reply.
+
+Why ntfy? A watch app cannot listen for messages while it is closed, and the new Pebble app does not deliver timeline notifications from servers. So a buzz with the app closed needs a normal phone notification, which the Pebble app forwards to your watch. ntfy only gets "New message: <sender>", never the text. Totally optional: without it, messages arrive whenever the app is open. Set it up in the app settings.
 
 Beta: use at your own risk, no guarantee of availability or delivery. Not for emergencies.
 
