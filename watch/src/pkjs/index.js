@@ -52,6 +52,25 @@ function plain(s) {
   for (var k in EMO) s = s.split(k).join(EMO[k]);
   return s.replace(/[\uFE0F\u200D]/g, '').replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '(emoji)');
 }
+/* Nachricht nur aus 1–3 Emojis, die die Uhr als Bild hat (EMOJI[] in main.c)? → kanonische Emojis, sonst null.
+   Verwandte Emojis werden auf das nächste Bild abgebildet. */
+var EMO_IMG = ['\uD83D\uDC4D', '\uD83D\uDE0A', '\uD83D\uDE02', '\u2764', '\uD83D\uDE09', '\uD83D\uDE00', '\uD83D\uDE18', '\uD83D\uDE2E',
+  '\uD83D\uDE22', '\uD83D\uDE1E', '\uD83D\uDE21', '\uD83E\uDD14', '\uD83D\uDC4B', '\uD83C\uDF89', '\uD83D\uDE4F', '\uD83D\uDC4C', '\uD83D\uDC4E'];
+var EMO_ALIAS = { '\uD83D\uDE03': '\uD83D\uDE00', '\uD83D\uDE04': '\uD83D\uDE00', '\uD83D\uDE01': '\uD83D\uDE00', '\uD83E\uDD23': '\uD83D\uDE02',
+  '\uD83D\uDE42': '\uD83D\uDE0A', '\uD83D\uDE2D': '\uD83D\uDE22', '\uD83D\uDE41': '\uD83D\uDE1E', '\uD83D\uDE20': '\uD83D\uDE21' };
+function emojiOnly(s) {
+  var t = String(s || '').replace(/[\uFE0F\u200D\s]|\uD83C[\uDFFB-\uDFFF]/g, ''), out = [];
+  var parts = t.match(/[\uD800-\uDBFF][\uDC00-\uDFFF]|[\s\S]/g) || [];
+  if (!parts.length || parts.length > 3) return null;
+  for (var i = 0; i < parts.length; i++) {
+    var e = EMO_ALIAS[parts[i]] || parts[i];
+    if (EMO_IMG.indexOf(e) < 0) return null;
+    out.push(e);
+  }
+  return out.join('');
+}
+/* Nachrichtentext für die Uhr: reine Emoji-Nachricht als echte Emojis (Uhr zeigt Bilder), sonst Text */
+function msgText(s, bytes) { return emojiOnly(s) || trunc(s, bytes); }
 /* Text auf eine Byte-Länge (UTF-8) kürzen, ohne Zeichen zu zerschneiden */
 function trunc(s, bytes) {
   s = plain(s);
@@ -197,6 +216,7 @@ function loadChats() {
     status('Not set up yet. Open the WatchieTalkie2 settings in the Pebble app.');
     return;
   }
+  if (!listOk) status('Loading chats ...');   // Uhr zeigt bis dahin „Connecting to phone …“
   api('GET', '/v1/me', null, function (err, m) {
     if (err) return listFailed(err);
     me = m;
@@ -246,7 +266,7 @@ function loadMessages(cid) {
     if (!msgs.length) { toWatch({ CMD: C.MSG_ITEM, CHAT: cid, IDX: 0, COUNT: 0 }); return; }
     var bytes = platform() === 'aplite' ? 200 : 400;
     msgs.forEach(function (msg, i) {
-      toWatch({ CMD: C.MSG_ITEM, CHAT: cid, IDX: i, COUNT: msgs.length, FROM: msg.f, TEXT: trunc(readable(msg), bytes), FLAGS: msg.f === (me && me.name) ? 1 : 0 });
+      toWatch({ CMD: C.MSG_ITEM, CHAT: cid, IDX: i, COUNT: msgs.length, FROM: msg.f, TEXT: msgText(readable(msg), bytes), FLAGS: msg.f === (me && me.name) ? 1 : 0 });
     });
     api('POST', '/v1/chats/' + cid + '/read', { upTo: msgs[msgs.length - 1].id }, function () {});
   });
@@ -316,7 +336,7 @@ function poll() {
     if (r.seq >= seq) {
       fresh = (r.msgs || []).filter(function (msg) { return msg.id > seq; });
       fresh.forEach(function (msg) {
-        toWatch({ CMD: C.NEW_MSG, CHAT: msg.chat, FROM: msg.f, TEXT: trunc(readable(msg), platform() === 'aplite' ? 200 : 400) });
+        toWatch({ CMD: C.NEW_MSG, CHAT: msg.chat, FROM: msg.f, TEXT: msgText(readable(msg), platform() === 'aplite' ? 200 : 400) });
         if (msg.chat === openChat) api('POST', '/v1/chats/' + msg.chat + '/read', { upTo: msg.id }, function () {});
       });
       seq = Math.max(seq, r.seq);

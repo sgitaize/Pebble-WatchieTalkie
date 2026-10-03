@@ -51,7 +51,7 @@ Watch (C) ⇄ AppMessage ⇄ PebbleKit JS (phone, encrypts/decrypts) ⇄ HTTPS/J
 
 1. Install WatchieTalkie2 from the Pebble App Store: [apps.repebble.com/5baaf5505dcf4454bdab0478](https://apps.repebble.com/5baaf5505dcf4454bdab0478)
 2. In the Pebble app, open **Settings** for WatchieTalkie2: choose a username, invite friends by username, create groups, set up quick replies, **Save**.
-3. On the watch: pick a chat → **SELECT** = speak, **long SELECT** = quick reply, emoji (like the original) or delete your own last message, **up/down** = scroll. Invitations appear at the top of the list and can be accepted right on the watch.
+3. On the watch: pick a chat → **SELECT** = speak, **long SELECT** = menu: emoji (shown as pictures), delete your own last message, pause push – quick replies below, **up/down** = scroll. Invitations appear at the top of the list and can be accepted right on the watch.
 4. New phone: show the **transfer code** in the settings and enter it on the new phone under "I already have an account" (it contains your access and secret key – never share it).
 
 ## Security
@@ -167,4 +167,4 @@ The Pebble SDK currently does not allow apps to record audio from the microphone
 
 ## License
 
-[MIT](LICENSE) – free to use, including commercially, as long as the copyright notice is retained. TweetNaCl-js: public domain. Idea and name inspired by the former Watchie-Talkie for Pebble.
+[MIT](LICENSE) – free to use, including commercially, as long as the copyright notice is retained. TweetNaCl-js: public domain. Emoji images on the watch: rendered from [Noto Color Emoji](https://github.com/googlefonts/noto-emoji) (SIL Open Font License 1.1) with `watch/tools/emoji.py`. Idea and name inspired by the former Watchie-Talkie for Pebble.

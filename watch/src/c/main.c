@@ -10,7 +10,7 @@ enum { C_LIST_ITEM = 2, C_MSG_ITEM = 5, C_NEW_MSG = 7, C_QR_ITEM = 8, C_STATUS =
 enum { C_READY = 20, C_OPEN = 21, C_SEND = 22, C_CLOSE = 23, C_ACCEPT = 24, C_DECLINE = 25, C_SEND_VOICE = 26, C_TEST = 27, C_BEEP = 28, C_DELETE = 29, C_PAUSE = 30 };
 /* Art eines Listeneintrags */
 enum { K_CHAT = 0, K_CONTACT_INVITE = 1, K_GROUP_INVITE = 2 };
-/* Auswahlmenü – mode 0: Schnellantworten + „Emoji …“ + „Letzte Nachricht löschen“ · 1: Einladung annehmen/ablehnen
+/* Auswahlmenü – mode 0: „Emoji …“, „Letzte Nachricht löschen“, „Push pausieren“, darunter Schnellantworten · 1: Einladung annehmen/ablehnen
    2: Emoji wählen · 3: Löschen bestätigen · 4: Liste (Push pausieren, Piep an/aus) */
 enum { P_REPLY = 0, P_INVITE = 1, P_EMOJI = 2, P_DELETE = 3, P_LIST = 4 };
 
@@ -68,16 +68,18 @@ static GColor soft(void) {
 #endif
 
 typedef struct { char id[20]; char title[26]; char preview[44]; uint8_t unread; uint8_t kind; } Chat;
-typedef struct { char *text; char from[17]; bool mine; int16_t h; } Msg;
+typedef struct { char *text; char from[17]; bool mine; int16_t h; uint8_t emo[3], emo_n; } Msg;   /* emo: reine Emoji-Nachricht */
 
 static Chat s_chats[MAX_CHATS];
 static int s_chat_count;
 /* Texte (nur Englisch) */
 enum { T_LOADING, T_EMPTY_CHAT, T_EMOJI, T_ACCEPT, T_DECLINE, T_CONTACT_REQ, T_GROUP_INV, T_NO_VOICE, T_NEW_FROM, T_SEND_FAILED,
-  T_DELETE_LAST, T_DELETE_YES, T_CANCEL, T_PAUSE, T_RESUME, T_BEEP_ON, T_BEEP_OFF };
-static const char *T_EN[] = { "Loading …", "No messages yet.\nSELECT: speak\nhold SELECT: quick reply, emoji", "Emoji …",
+  T_DELETE_LAST, T_DELETE_YES, T_CANCEL, T_PAUSE, T_RESUME, T_BEEP_ON, T_BEEP_OFF, T_CONNECTING, T_NO_PHONE, T_NO_ANSWER, T_PHONE_LOST };
+static const char *T_EN[] = { "Loading …", "No messages yet.\nSELECT: speak\nhold SELECT: emoji, quick reply", "Emoji …",
   "Accept", "Decline", "Contact request", "Group invitation", "Voice not available", "New from %s", "Sending failed",
-  "Delete my last message", "Yes, delete it", "Cancel", "Pause push", "Resume push", "Beep on", "Beep off" };
+  "Delete my last message", "Yes, delete it", "Cancel", "Pause push", "Resume push", "Beep on", "Beep off",
+  "Connecting to phone …", "Phone not connected.\nOpen the Pebble app on your phone – loading continues automatically.",
+  "No answer from phone.\nRetrying …", "Phone disconnected" };
 #define TR(i) (T_EN[i])
 static char s_status[160] = "…";
 
@@ -180,11 +182,68 @@ static void banner_show(const char *text) {
   s_banner_timer = app_timer_register(3000, banner_hide, NULL);
 }
 
+/* ----------------------------------------------------------- Emoji -- */
+/* Die Uhr-Schriften haben keine Emojis → eigene Bilder (tools/emoji.py, Noto Color Emoji). Gesendet wird das echte Emoji;
+   Nachrichten, die nur aus 1–3 dieser Emojis bestehen, zeigt der Chat als Bilder (pkjs schickt sie dann unverändert). */
+static const char *EMOJI[][2] = {
+  { "\xF0\x9F\x91\x8D", "Thumbs up" }, { "\xF0\x9F\x98\x8A", "Smile" }, { "\xF0\x9F\x98\x82", "Laughing" },
+  { "\xE2\x9D\xA4\xEF\xB8\x8F", "Heart" }, { "\xF0\x9F\x98\x89", "Wink" }, { "\xF0\x9F\x98\x80", "Grin" },
+  { "\xF0\x9F\x98\x98", "Kiss" }, { "\xF0\x9F\x98\xAE", "Surprised" }, { "\xF0\x9F\x98\xA2", "Crying" },
+  { "\xF0\x9F\x98\x9E", "Sad" }, { "\xF0\x9F\x98\xA1", "Angry" }, { "\xF0\x9F\xA4\x94", "Thinking" },
+  { "\xF0\x9F\x91\x8B", "Wave" }, { "\xF0\x9F\x8E\x89", "Party" }, { "\xF0\x9F\x99\x8F", "Thanks" },
+  { "\xF0\x9F\x91\x8C", "OK" }, { "\xF0\x9F\x91\x8E", "Thumbs down" },
+};
+#define EMOJI_N ((int)ARRAY_LENGTH(EMOJI))
+static const uint32_t EMOJI_RES[] = { RESOURCE_ID_EMOJI_00, RESOURCE_ID_EMOJI_01, RESOURCE_ID_EMOJI_02, RESOURCE_ID_EMOJI_03,
+  RESOURCE_ID_EMOJI_04, RESOURCE_ID_EMOJI_05, RESOURCE_ID_EMOJI_06, RESOURCE_ID_EMOJI_07, RESOURCE_ID_EMOJI_08, RESOURCE_ID_EMOJI_09,
+  RESOURCE_ID_EMOJI_10, RESOURCE_ID_EMOJI_11, RESOURCE_ID_EMOJI_12, RESOURCE_ID_EMOJI_13, RESOURCE_ID_EMOJI_14, RESOURCE_ID_EMOJI_15,
+  RESOURCE_ID_EMOJI_16 };
+#define EMO PBL_IF_COLOR_ELSE((PBL_DISPLAY_WIDTH >= 200 ? 36 : 28), 28)
+static GBitmap *s_emo_bmp[ARRAY_LENGTH(EMOJI)];   /* bei Bedarf geladen, freigegeben wenn Chat und Menü zu sind */
+static void emoji_free(void) {
+  for (int i = 0; i < EMOJI_N; i++) if (s_emo_bmp[i]) { gbitmap_destroy(s_emo_bmp[i]); s_emo_bmp[i] = NULL; }
+}
+/* Bild an p; S/W: Bild hat weißen Grund – auf schwarzem Grund als weiße Kachel */
+static void emoji_draw(GContext *ctx, int i, GPoint p, GColor under) {
+  if (!s_emo_bmp[i]) s_emo_bmp[i] = gbitmap_create_with_resource(EMOJI_RES[i]);
+  if (!s_emo_bmp[i]) return;
+  GRect r = GRect(p.x, p.y, EMO, EMO);
+#if defined(PBL_COLOR)
+  graphics_context_set_compositing_mode(ctx, GCompOpSet);
+#else
+  if (gcolor_equal(under, GColorBlack)) { graphics_context_set_fill_color(ctx, GColorWhite); graphics_fill_rect(ctx, grect_inset(r, GEdgeInsets(-2)), 5, GCornersAll); }
+  graphics_context_set_compositing_mode(ctx, GCompOpAssign);
+#endif
+  graphics_draw_bitmap_in_rect(ctx, s_emo_bmp[i], r);
+  graphics_context_set_compositing_mode(ctx, GCompOpAssign);
+}
+/* Text nur aus 1–3 Tabellen-Emojis (Leerzeichen/FE0F egal)? → Indizes nach out, Anzahl; sonst 0 */
+static int emoji_parse(const char *t, uint8_t *out) {
+  int n = 0;
+  while (*t) {
+    if (*t == ' ') { t++; continue; }
+    if (!strncmp(t, "\xEF\xB8\x8F", 3)) { t += 3; continue; }
+    int k = -1;
+    size_t l = 0;
+    for (int i = 0; i < EMOJI_N && k < 0; i++) {
+      l = strlen(EMOJI[i][0]);
+      if (l > 4 && !strcmp(EMOJI[i][0] + l - 3, "\xEF\xB8\x8F")) l -= 3;   /* Herz: ohne Variantenzeichen vergleichen */
+      if (!strncmp(t, EMOJI[i][0], l)) k = i;
+    }
+    if (k < 0 || n == 3) return 0;
+    out[n++] = k;
+    t += l;
+  }
+  return n;
+}
+
 /* ------------------------------------------------------------- Chat -- */
 static int text_width(void) {
   return PBL_DISPLAY_WIDTH - 2 * PAD - 2 * ROUND_INSET - 24;
 }
 static void measure(Msg *m) {
+  m->emo_n = m->text ? emoji_parse(m->text, m->emo) : 0;
+  if (m->emo_n) { m->h = EMO + 4 + (m->mine ? 0 : s_name_h) + 2 * PAD + 6; return; }
   GSize s = graphics_text_layout_get_content_size(m->text ? m->text : "", s_font_body, GRect(0, 0, text_width(), 2000),
                                                   GTextOverflowModeWordWrap, GTextAlignmentLeft);
   m->h = s.h + (m->mine ? 0 : s_name_h) + 2 * PAD + 6;
@@ -222,7 +281,11 @@ static void content_update(Layer *layer, GContext *ctx) {
       graphics_draw_text(ctx, m->from, s_font_name, GRect(bx + 6, ty, bw - 12, s_name_h + 6), GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
       ty += s_name_h;
     }
-    graphics_draw_text(ctx, m->text ? m->text : "", s_font_body, GRect(bx + 6, ty, bw - 12, 2000), GTextOverflowModeWordWrap,
+    if (m->emo_n) {                               /* reine Emoji-Nachricht: Bilder, eigene rechtsbündig */
+      int ex = m->mine ? bx + bw - 6 - m->emo_n * (EMO + 2) : bx + 6;
+      for (int k = 0; k < m->emo_n; k++)
+        emoji_draw(ctx, m->emo[k], GPoint(ex + k * (EMO + 2), ty + 4), m->mine ? PBL_IF_COLOR_ELSE(soft(), FG) : BG);
+    } else graphics_draw_text(ctx, m->text ? m->text : "", s_font_body, GRect(bx + 6, ty, bw - 12, 2000), GTextOverflowModeWordWrap,
                        m->mine ? GTextAlignmentRight : GTextAlignmentLeft, NULL);
     graphics_context_set_text_color(ctx, FG);
     y += m->h;
@@ -260,12 +323,12 @@ static void msg_append(const char *from, const char *text, bool mine) {
   msg_set(&s_msgs[s_msg_count++], from, text, mine);
 }
 
-static void pick_open(int mode);
+static void pick_open(int mode, bool focus_qr);
 static void start_talk(void) {
 #if defined(PBL_MICROPHONE)
   if (s_dict && dictation_session_start(s_dict) == DictationSessionStatusSuccess) return;
 #endif
-  pick_open(P_REPLY);
+  pick_open(P_REPLY, true);
 }
 #if defined(PBL_MICROPHONE)
 static void dict_done(DictationSession *session, DictationSessionStatus status, char *text, void *ctx) {
@@ -275,12 +338,12 @@ static void dict_done(DictationSession *session, DictationSessionStatus status, 
     send_cmd(C_SEND_VOICE, s_open_chat, text);
   } else if (status != DictationSessionStatusFailureTranscriptionRejected) {
     banner_show(TR(T_NO_VOICE));
-    pick_open(P_REPLY);
+    pick_open(P_REPLY, true);
   }
 }
 #endif
 static void chat_select(ClickRecognizerRef r, void *ctx) { start_talk(); }
-static void chat_long_select(ClickRecognizerRef r, void *ctx) { pick_open(P_REPLY); }
+static void chat_long_select(ClickRecognizerRef r, void *ctx) { pick_open(P_REPLY, false); }
 static void chat_click_config(void *ctx) {
   window_single_click_subscribe(BUTTON_ID_SELECT, chat_select);
   window_long_click_subscribe(BUTTON_ID_SELECT, 500, chat_long_select, NULL);
@@ -319,8 +382,10 @@ static void chat_unload(Window *w) {
   send_cmd(C_CLOSE, s_open_chat, NULL);
   s_open_chat[0] = 0;
   msgs_clear();
+  if (!s_pick_win) emoji_free();
 }
 static void watchdog_arm(void);
+static void show_load_status(const char *t);
 static void chat_open(Chat *c) {
   msgs_clear();
   strncpy(s_open_chat, c->id, sizeof(s_open_chat));
@@ -332,7 +397,8 @@ static void chat_open(Chat *c) {
   window_set_background_color(s_chat_win, BG);
   window_set_window_handlers(s_chat_win, (WindowHandlers) { .load = chat_load, .unload = chat_unload });
   window_stack_push(s_chat_win, true);
-  send_cmd(C_OPEN, c->id, NULL);
+  if (connection_service_peek_pebble_app_connection()) send_cmd(C_OPEN, c->id, NULL);
+  else show_load_status(TR(T_NO_PHONE));
 }
 
 /* ------------------------------------------------------ Menüzelle -- */
@@ -355,97 +421,120 @@ static void cell_draw(GContext *ctx, const Layer *cell, const char *title, const
 }
 
 /* ---------------------------------------------------- Auswahlmenü -- */
-/* Emojis wie im Original-Watchie-Talkie: gesendet wird das echte Emoji (UTF-8), die Uhr-Schrift zeigt den Text-Smiley */
-static const char *EMOJI[][3] = {
-  { "\xF0\x9F\x91\x8D", "(y)", "Thumbs up" }, { "\xF0\x9F\x98\x8A", ":)", "Smile" }, { "\xF0\x9F\x98\x82", "xD", "Laughing" },
-  { "\xE2\x9D\xA4\xEF\xB8\x8F", "<3", "Heart" }, { "\xF0\x9F\x98\x89", ";)", "Wink" }, { "\xF0\x9F\x98\x80", ":D", "Grin" },
-  { "\xF0\x9F\x98\x98", ":*", "Kiss" }, { "\xF0\x9F\x98\xAE", ":O", "Surprised" }, { "\xF0\x9F\x98\xA2", ":'(", "Crying" },
-  { "\xF0\x9F\x98\x9E", ":(", "Sad" }, { "\xF0\x9F\x98\xA1", ">:(", "Angry" }, { "\xF0\x9F\xA4\x94", "(?)", "Thinking" },
-  { "\xF0\x9F\x91\x8B", "o/", "Wave" }, { "\xF0\x9F\x8E\x89", "\\o/", "Party" }, { "\xF0\x9F\x99\x8F", "(thanks)", "Thanks" },
-  { "\xF0\x9F\x91\x8C", "(ok)", "OK" }, { "\xF0\x9F\x91\x8E", "(n)", "Thumbs down" },
-};
 static int s_pick_mode;
+static int s_pick_focus;   /* Startzeile beim Öffnen */
 static Chat s_pick_chat;
 #if defined(HAS_SPEAKER)
 #define BEEP_ROWS 1
 #else
 #define BEEP_ROWS 0
 #endif
-/* Zeilen hinter Schnellantworten/Emoji/Löschen bzw. im Listenmenü: optional „Pause push“, im Listenmenü noch Piep */
-static int pick_extra_start(void) {
-  if (s_pick_mode == P_LIST) return 0;
-  return s_qr_count + (strcmp(s_open_chat, "u.watchietalkie") ? 2 : 0);   /* System-Chat: nur lesbar */
+/* Menü im Chat (P_REPLY): oben Emoji, Letzte löschen, Push pausieren – darunter die Schnellantworten.
+   Listenmenü (P_LIST): Push pausieren, Piep an/aus. System-Chat: nur lesbar, kein Emoji/Löschen. */
+enum { R_EMOJI, R_DELETE, R_PAUSE, R_BEEP, R_QR };
+static bool sys_chat(void) { return !strcmp(s_open_chat, "u.watchietalkie"); }
+static int pick_opts(void) {
+  if (s_pick_mode == P_LIST) return (s_push_avail ? 1 : 0) + BEEP_ROWS;
+  return (sys_chat() ? 0 : 2) + (s_push_avail ? 1 : 0);
+}
+static int row_kind(int r) {
+  if (s_pick_mode == P_LIST) return s_push_avail && r == 0 ? R_PAUSE : R_BEEP;
+  if (!sys_chat()) { if (r == 0) return R_EMOJI; if (r == 1) return R_DELETE; r -= 2; }
+  return s_push_avail && r == 0 ? R_PAUSE : R_QR;
 }
 static uint16_t pick_rows(MenuLayer *m, uint16_t s, void *ctx) {
   if (s_pick_mode == P_INVITE || s_pick_mode == P_DELETE) return 2;
-  if (s_pick_mode == P_EMOJI) return ARRAY_LENGTH(EMOJI);
-  return pick_extra_start() + (s_push_avail ? 1 : 0) + (s_pick_mode == P_LIST ? BEEP_ROWS : 0);
+  if (s_pick_mode == P_EMOJI) return EMOJI_N;
+  return pick_opts() + (s_pick_mode == P_REPLY ? s_qr_count : 0);
+}
+/* Zeile mit Emoji-Bild links vom Titel (Bild nur, wenn die Zeile hoch genug ist) */
+static void icon_cell(GContext *ctx, const Layer *cell, int e, const char *title) {
+  GRect b = layer_get_bounds(cell);
+  GFont f = s_look.font ? s_font_mtitle : fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  int fh = s_look.font ? MTITLE_H : 26, iw = b.size.h >= EMO + 2 ? EMO + 6 : 0;
+#if defined(PBL_ROUND)
+  int x = (b.size.w - iw - graphics_text_layout_get_content_size(title, f, GRect(0, 0, b.size.w - iw - 10, fh + 4),
+                                                   GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft).w) / 2;
+#else
+  int x = 5;
+#endif
+  if (iw) emoji_draw(ctx, e, GPoint(x, (b.size.h - EMO) / 2), menu_cell_layer_is_highlighted(cell) ? FG : BG);
+  graphics_draw_text(ctx, title, f, GRect(x + iw, (b.size.h - fh) / 2 - 4, b.size.w - x - iw - 2, fh + 4),
+                     GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
 }
 static void pick_draw(GContext *ctx, const Layer *cell, MenuIndex *idx, void *data) {
   int r = idx->row;
-  if (s_pick_mode == P_EMOJI) { cell_draw(ctx, cell, EMOJI[r][1], EMOJI[r][2]); return; }
-  int x = r - pick_extra_start();
-  if (s_pick_mode == P_LIST || (s_pick_mode == P_REPLY && x >= 0)) {
-    if (s_push_avail && x == 0) {
+  if (s_pick_mode == P_EMOJI) { icon_cell(ctx, cell, r, EMOJI[r][1]); return; }
+  if (s_pick_mode == P_INVITE) { cell_draw(ctx, cell, TR(r == 0 ? T_ACCEPT : T_DECLINE), NULL); return; }
+  if (s_pick_mode == P_DELETE) { cell_draw(ctx, cell, TR(r == 0 ? T_DELETE_YES : T_CANCEL), NULL); return; }
+  switch (row_kind(r)) {
+    case R_EMOJI: icon_cell(ctx, cell, 0, TR(T_EMOJI)); break;
+    case R_DELETE: cell_draw(ctx, cell, TR(T_DELETE_LAST), NULL); break;
+    case R_PAUSE: {
       static char sub[20];
       if (paused()) { struct tm *t = localtime(&s_pause_until); strftime(sub, sizeof(sub), clock_is_24h_style() ? "paused until %H:%M" : "paused until %I:%M", t); }
       else snprintf(sub, sizeof(sub), "for %d min", s_pause_min);
       cell_draw(ctx, cell, TR(paused() ? T_RESUME : T_PAUSE), sub);
-    } else cell_draw(ctx, cell, TR(s_beep ? T_BEEP_OFF : T_BEEP_ON), NULL);
-    return;
+      break;
+    }
+    case R_BEEP: cell_draw(ctx, cell, TR(s_beep ? T_BEEP_OFF : T_BEEP_ON), NULL); break;
+    default: cell_draw(ctx, cell, s_qr[r - pick_opts()], NULL);
   }
-  const char *t = s_pick_mode == P_INVITE ? TR(r == 0 ? T_ACCEPT : T_DECLINE)
-                : s_pick_mode == P_DELETE ? TR(r == 0 ? T_DELETE_YES : T_CANCEL)
-                : r < s_qr_count ? s_qr[r] : TR(r == s_qr_count ? T_EMOJI : T_DELETE_LAST);
-  cell_draw(ctx, cell, t, NULL);
 }
 static int16_t pick_row_h(MenuLayer *m, MenuIndex *idx, void *ctx) {
-  bool sub = s_pick_mode == P_EMOJI
-    || ((s_pick_mode == P_LIST || s_pick_mode == P_REPLY) && s_push_avail && idx->row == pick_extra_start());
-  return cell_h(sub, menu_layer_is_index_selected(m, idx));
+  bool focused = menu_layer_is_index_selected(m, idx);
+  if (s_pick_mode == P_EMOJI) return s_look.font ? cell_h(false, true) : EMO + 10;
+  bool reply = s_pick_mode == P_LIST || s_pick_mode == P_REPLY;
+  if (reply && row_kind(idx->row) == R_EMOJI) return cell_h(false, true);
+  return cell_h(reply && row_kind(idx->row) == R_PAUSE, focused);
 }
 static void pick_select(MenuLayer *m, MenuIndex *idx, void *ctx);
-/* Schriftgröße 0: Standard-Zeilenhöhen des Systems (kein get_cell_height) */
+/* Schriftgröße 0: Standard-Zeilenhöhen des Systems (außer in der Emoji-Auswahl) */
 static void pick_callbacks(void) {
   menu_layer_set_callbacks(s_pick_menu, NULL, (MenuLayerCallbacks) { .get_num_rows = pick_rows, .draw_row = pick_draw,
-    .select_click = pick_select, .get_cell_height = s_look.font ? pick_row_h : NULL });
+    .select_click = pick_select, .get_cell_height = s_look.font || s_pick_mode == P_EMOJI ? pick_row_h : NULL });
 }
 static void pick_mode(int mode) {
   s_pick_mode = mode;
+  pick_callbacks();
   menu_layer_reload_data(s_pick_menu);
   menu_layer_set_selected_index(s_pick_menu, MenuIndex(0, 0), MenuRowAlignCenter, false);
 }
-static void pick_send(const char *shown, const char *text) {
+static void pick_send(const char *text) {
   if (!s_open_chat[0]) return;
-  msg_append("", shown, true);
+  msg_append("", text, true);
   chat_relayout(true);
   send_cmd(C_SEND, s_open_chat, text);
 }
 static void main_reload(void);
 static void pick_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
-  int r = idx->row, x = r - pick_extra_start();
-  if ((s_pick_mode == P_LIST || s_pick_mode == P_REPLY) && x >= 0) {
-    if (s_push_avail && x == 0) {                 /* Push pausieren / fortsetzen – Server bestätigt per C_PUSH */
+  int r = idx->row;
+  if (s_pick_mode == P_INVITE) {
+    send_cmd(r == 0 ? C_ACCEPT : C_DECLINE, s_pick_chat.id, NULL);
+    snprintf(s_status, sizeof(s_status), "%s", TR(T_LOADING));
+  } else if (s_pick_mode == P_EMOJI) {
+    pick_send(EMOJI[r][0]);
+  } else if (s_pick_mode == P_DELETE) {
+    if (r == 0 && s_open_chat[0]) send_cmd(C_DELETE, s_open_chat, NULL);
+  } else switch (row_kind(r)) {
+    case R_EMOJI: pick_mode(P_EMOJI); return;
+    case R_DELETE: pick_mode(P_DELETE); return;
+    case R_PAUSE: {                               /* Push pausieren / fortsetzen – Server bestätigt per C_PUSH */
       bool on = !paused();
       s_pause_until = on ? time(NULL) + s_pause_min * 60 : 0;
       send_cmd(C_PAUSE, NULL, on ? "1" : "0");
       vibes_short_pulse();
-    } else {                                      /* Piep an/aus (wie auf der Einstellungsseite) */
+      main_reload();
+      break;
+    }
+    case R_BEEP:                                  /* Piep an/aus (wie auf der Einstellungsseite) */
       s_beep = !s_beep;
       send_cmd(C_BEEP, NULL, s_beep ? "1" : "0");
       if (s_beep) roger_beep();
-    }
-    main_reload();
-  } else if (s_pick_mode == P_INVITE) {
-    send_cmd(r == 0 ? C_ACCEPT : C_DECLINE, s_pick_chat.id, NULL);
-    snprintf(s_status, sizeof(s_status), "%s", TR(T_LOADING));
-  } else if (s_pick_mode == P_EMOJI) {
-    pick_send(EMOJI[r][1], EMOJI[r][0]);
-  } else if (s_pick_mode == P_DELETE) {
-    if (r == 0 && s_open_chat[0]) send_cmd(C_DELETE, s_open_chat, NULL);
-  } else if (r < s_qr_count) {
-    pick_send(s_qr[r], s_qr[r]);
-  } else { pick_mode(r == s_qr_count ? P_EMOJI : P_DELETE); return; }
+      main_reload();
+      break;
+    default: pick_send(s_qr[r - pick_opts()]);
+  }
   window_stack_remove(s_pick_win, true);
 }
 static void pick_load(Window *w) {
@@ -455,12 +544,19 @@ static void pick_load(Window *w) {
   menu_layer_set_normal_colors(s_pick_menu, BG, FG);
   menu_layer_set_highlight_colors(s_pick_menu, FG, BG);
   menu_layer_set_click_config_onto_window(s_pick_menu, w);
+  if (s_pick_focus > 0 && s_pick_focus < pick_rows(s_pick_menu, 0, NULL))
+    menu_layer_set_selected_index(s_pick_menu, MenuIndex(0, s_pick_focus), MenuRowAlignCenter, false);
   layer_add_child(root, menu_layer_get_layer(s_pick_menu));
 }
-static void pick_unload(Window *w) { menu_layer_destroy(s_pick_menu); s_pick_menu = NULL; window_destroy(w); s_pick_win = NULL; }
-static void pick_open(int mode) {
+static void pick_unload(Window *w) {
+  menu_layer_destroy(s_pick_menu); s_pick_menu = NULL; window_destroy(w); s_pick_win = NULL;
+  if (!s_chat_win) emoji_free();
+}
+/* focus_qr: direkt auf der ersten Schnellantwort starten (Uhr ohne Mikrofon / Diktat fehlgeschlagen) */
+static void pick_open(int mode, bool focus_qr) {
   if (s_pick_win) return;
   s_pick_mode = mode;
+  s_pick_focus = focus_qr && s_qr_count ? pick_opts() : 0;
   s_pick_win = window_create();
   window_set_window_handlers(s_pick_win, (WindowHandlers) { .load = pick_load, .unload = pick_unload });
   window_stack_push(s_pick_win, true);
@@ -525,11 +621,11 @@ static void main_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
   if (!s_chat_count) { send_cmd(C_TEST, NULL, NULL); return; }   /* leere Liste: SELECT holt eine Testnachricht */
   Chat *c = &s_chats[idx->row];
   if (c->kind == K_CHAT) chat_open(c);
-  else { s_pick_chat = *c; pick_open(P_INVITE); }
+  else { s_pick_chat = *c; pick_open(P_INVITE, false); }
 }
 /* Langes SELECT in der Liste: kleines Menü (Push pausieren, Piep an/aus) – nur wenn es etwas zu wählen gibt */
 static void main_long_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
-  if (s_push_avail || BEEP_ROWS) pick_open(P_LIST);
+  if (s_push_avail || BEEP_ROWS) pick_open(P_LIST, false);
 }
 static void main_load(Window *w) {
   Layer *root = window_get_root_layer(w);
@@ -550,25 +646,42 @@ static void main_unload(Window *w) { menu_layer_destroy(s_menu); }
    Meldung anzeigen und die Anfrage wiederholen. Serverfehler meldet und wiederholt das Handy selbst. */
 static AppTimer *s_wd_timer;
 static uint32_t s_rx, s_rx_mark;
+/* Steht gerade „Laden“ auf dem Schirm (leere Liste bzw. Chat lädt)? Dann Meldung t dort anzeigen */
+static void show_load_status(const char *t) {
+  if (s_chat_win ? !(s_chat_loading || s_chat_failed) : s_chat_count > 0) return;
+  snprintf(s_status, sizeof(s_status), "%s", t);
+  if (s_chat_win) { s_chat_failed = true; chat_relayout(false); }
+  else main_reload();
+}
+/* Offene Anfrage (Liste bzw. Chat) neu stellen */
+static void request_again(void) {
+  if (s_chat_win) send_cmd(C_OPEN, s_open_chat, NULL);
+  else send_cmd(C_READY, NULL, NULL);
+}
 static void watchdog_fire(void *ctx) {
   s_wd_timer = NULL;
   if (s_rx != s_rx_mark) return;                 /* Handy hat geantwortet */
-  bool shown = s_chat_win ? (s_chat_loading || s_chat_failed) : !s_chat_count;
-  if (shown) {
-    snprintf(s_status, sizeof(s_status), "%s", connection_service_peek_pebble_app_connection()
-             ? "No answer from phone.\nRetrying ..." : "Phone not connected.\nRetrying ...");
-    if (s_chat_win) { s_chat_failed = true; chat_relayout(false); }
-    else main_reload();
-  }
-  if (s_chat_win && s_chat_loading) send_cmd(C_OPEN, s_open_chat, NULL);
-  else if (!s_chat_win) send_cmd(C_READY, NULL, NULL);
-  else return;
+  show_load_status(TR(connection_service_peek_pebble_app_connection() ? T_NO_ANSWER : T_NO_PHONE));
+  if (s_chat_win && !s_chat_loading) return;
+  request_again();
   s_wd_timer = app_timer_register(30000, watchdog_fire, NULL);
 }
 static void watchdog_arm(void) {
   s_rx_mark = s_rx;
   if (s_wd_timer) app_timer_cancel(s_wd_timer);
   s_wd_timer = app_timer_register(20000, watchdog_fire, NULL);
+}
+/* Verbindung zum Handy: getrennt → sofort Meldung statt „Loading …“; wieder da → neu laden */
+static void conn_changed(bool up) {
+  if (!up) {
+    show_load_status(TR(T_NO_PHONE));
+    if (s_chat_win && !s_chat_failed) banner_show(TR(T_PHONE_LOST));
+    return;
+  }
+  show_load_status(TR(T_LOADING));
+  if (s_chat_win && s_chat_failed) { s_chat_failed = false; s_chat_loading = true; chat_relayout(false); }
+  request_again();
+  watchdog_arm();
 }
 
 /* -------------------------------------------------------- Aussehen -- */
@@ -681,7 +794,7 @@ static void inbox(DictionaryIterator *it, void *ctx) {
 }
 
 static void init(void) {
-  snprintf(s_status, sizeof(s_status), "%s", TR(T_LOADING));
+  snprintf(s_status, sizeof(s_status), "%s", TR(T_CONNECTING));   /* bis das Handy antwortet */
   s_font_head = fonts_get_system_font(FONT_HEAD);
   if (persist_exists(PERSIST_LOOK)) persist_read_data(PERSIST_LOOK, &s_look, sizeof(s_look));
   look_apply(false);
@@ -696,8 +809,9 @@ static void init(void) {
   s_main_win = window_create();
   window_set_window_handlers(s_main_win, (WindowHandlers) { .load = main_load, .unload = main_unload });
   window_stack_push(s_main_win, true);
-  send_cmd(C_READY, NULL, NULL);
-  watchdog_arm();
+  connection_service_subscribe((ConnectionHandlers) { .pebble_app_connection_handler = conn_changed });
+  if (connection_service_peek_pebble_app_connection()) { send_cmd(C_READY, NULL, NULL); watchdog_arm(); }
+  else show_load_status(TR(T_NO_PHONE));
 }
 static void deinit(void) {
 #if defined(PBL_MICROPHONE)
