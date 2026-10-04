@@ -1,7 +1,7 @@
 {
   "name": "watchietalkie",
   "author": "Simon Gutjahr",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "keywords": [
     "pebble-app"
   ],
@@ -37,7 +37,8 @@
       "COUNT",
       "UNREAD",
       "KIND",
-      "FLAGS"
+      "FLAGS",
+      "TS"
     ],
     "resources": {
       "media": [

@@ -6,7 +6,8 @@ Pick a contact on your watch, press SELECT, speak – the message arrives as tex
 
 WatchieTalkie2 is a **continuation of the former [Watchie-Talkie](https://apps.repebble.com/55de02ca4374cb08ff000055)**, which has been offline for years. The motivation: everyone should be able to have a just-for-fun chat with friends right on their wrist – and host the server themselves if they want to. Rewritten from scratch, no connection to the original provider.
 
-- **Speech → text** via Pebble dictation (watches with a microphone)
+- **Speech → text** via Pebble dictation (watches with a microphone); the full recognized text is shown for confirmation before sending, dictated messages are marked "dictated"
+- **Date and time** under every message
 - **Quick replies** (fully customizable, also for watches without a microphone)
 - **Usernames, invitations, blocking** – up to 3 aliases per account (e.g. a developer and a private name; invitations to an alias go to the main account, and the contact then sees the main name)
 - **Direct chats and groups** (up to 20 members)

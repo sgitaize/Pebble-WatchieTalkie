@@ -70,6 +70,8 @@ function emojiOnly(s) {
   return out.join('');
 }
 /* Nachrichtentext für die Uhr: reine Emoji-Nachricht als echte Emojis (Uhr zeigt Bilder), sonst Text */
+/* Server-Zeit (ms) → Sekunden für die Zeitzeile auf der Uhr; v = diktiert */
+function msgTs(msg) { return Math.floor((msg && msg.ts || 0) / 1000); }
 function msgText(s, bytes) { return emojiOnly(s) || trunc(s, bytes); }
 /* Text auf eine Byte-Länge (UTF-8) kürzen, ohne Zeichen zu zerschneiden */
 function trunc(s, bytes) {
@@ -266,7 +268,8 @@ function loadMessages(cid) {
     if (!msgs.length) { toWatch({ CMD: C.MSG_ITEM, CHAT: cid, IDX: 0, COUNT: 0 }); return; }
     var bytes = platform() === 'aplite' ? 200 : 400;
     msgs.forEach(function (msg, i) {
-      toWatch({ CMD: C.MSG_ITEM, CHAT: cid, IDX: i, COUNT: msgs.length, FROM: msg.f, TEXT: msgText(readable(msg), bytes), FLAGS: msg.f === (me && me.name) ? 1 : 0 });
+      toWatch({ CMD: C.MSG_ITEM, CHAT: cid, IDX: i, COUNT: msgs.length, FROM: msg.f, TEXT: msgText(readable(msg), bytes),
+        FLAGS: (msg.f === (me && me.name) ? 1 : 0) | (msg.v ? 2 : 0), TS: msgTs(msg) });
     });
     api('POST', '/v1/chats/' + cid + '/read', { upTo: msgs[msgs.length - 1].id }, function () {});
   });
@@ -336,7 +339,8 @@ function poll() {
     if (r.seq >= seq) {
       fresh = (r.msgs || []).filter(function (msg) { return msg.id > seq; });
       fresh.forEach(function (msg) {
-        toWatch({ CMD: C.NEW_MSG, CHAT: msg.chat, FROM: msg.f, TEXT: msgText(readable(msg), platform() === 'aplite' ? 200 : 400) });
+        toWatch({ CMD: C.NEW_MSG, CHAT: msg.chat, FROM: msg.f, TEXT: msgText(readable(msg), platform() === 'aplite' ? 200 : 400),
+          FLAGS: msg.v ? 2 : 0, TS: msgTs(msg) });
         if (msg.chat === openChat) api('POST', '/v1/chats/' + msg.chat + '/read', { upTo: msg.id }, function () {});
       });
       seq = Math.max(seq, r.seq);

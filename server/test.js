@@ -94,6 +94,7 @@ async function main() {
   await api('POST', '/v1/chats/u.' + B + '/messages', { e: enc([A, B]), voice: true }, ta);
   r = await pending;
   ok(r.body.msgs.length === 1 && Date.now() - t0 < 3000, 'Long-Poll wird durch neue Nachricht sofort geweckt');
+  ok(r.body.msgs[0].v === 1 && typeof r.body.msgs[0].ts === 'number', 'Diktierte Nachricht trägt Markierung v und Zeit ts');
   lastId = r.body.seq;
   const st1 = (await api('GET', '/v1/stats')).body;
   ok(st1.messages === st0.messages && st1.voice === st0.voice, 'Testkonten zählen nicht in der Statistik');

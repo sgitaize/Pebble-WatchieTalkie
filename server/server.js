@@ -46,7 +46,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.9.0';
+const VERSION = '1.10.0';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -179,6 +179,7 @@ function meView(u) {
 function msgView(m, reader) {
   const v = { id: m.id, f: m.f, ts: m.ts, e: m.e ? { v: m.e.v, n: m.e.n, c: m.e.c, k: m.e.k[reader] || null } : null };
   if (m.t) v.t = m.t;                        // nur Systemnachrichten haben Klartext
+  if (m.v) v.v = 1;                          // per Diktat (Spracherkennung) erstellt
   return v;
 }
 /* Verschlüsselte Nachricht prüfen: {v:1, n:Nonce, c:Chiffretext, k:{name: Umschlag}} – Klartext wird nicht angenommen */
@@ -201,6 +202,7 @@ function serverInfo() {
 function postMessage(u, a, e, voice) {
   const ch = chatOf(a.key);
   const msg = { id: ++db.seq, f: u.name, e, ts: now() };
+  if (voice) msg.v = 1;
   ch.msgs.push(msg);
   if (ch.msgs.length > HISTORY_MAX) ch.msgs.splice(0, ch.msgs.length - HISTORY_MAX);
   u.read[a.key] = msg.id;

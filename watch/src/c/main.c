@@ -49,6 +49,7 @@ static const uint8_t MSUB_H[] = { 0, 20, 26 };
 #define PAD 4
 #define ACCENT PBL_IF_COLOR_ELSE(GColorSunsetOrange, GColorBlack)
 #define ROUND_INSET PBL_IF_ROUND_ELSE(22, 0)
+#define META_H 14   /* Zeitzeile (Gothic 14) */
 #define TOP (PBL_IF_ROUND_ELSE(36, 2) + s_name_h + 6)
 
 /* Aussehen (Einstellungsseite, auf der Uhr gespeichert): Schriftgröße, Hinter-/Vordergrund (GColor8), Licht an */
@@ -68,18 +69,18 @@ static GColor soft(void) {
 #endif
 
 typedef struct { char id[20]; char title[26]; char preview[44]; uint8_t unread; uint8_t kind; } Chat;
-typedef struct { char *text; char from[17]; bool mine; int16_t h; uint8_t emo[3], emo_n; } Msg;   /* emo: reine Emoji-Nachricht */
+typedef struct { char *text; char from[17]; bool mine, voice; int16_t h; uint8_t emo[3], emo_n; time_t ts; } Msg;   /* emo: reine Emoji-Nachricht, voice: diktiert */
 
 static Chat s_chats[MAX_CHATS];
 static int s_chat_count;
 /* Texte (nur Englisch) */
 enum { T_LOADING, T_EMPTY_CHAT, T_EMOJI, T_ACCEPT, T_DECLINE, T_CONTACT_REQ, T_GROUP_INV, T_NO_VOICE, T_NEW_FROM, T_SEND_FAILED,
-  T_DELETE_LAST, T_DELETE_YES, T_CANCEL, T_PAUSE, T_RESUME, T_BEEP_ON, T_BEEP_OFF, T_CONNECTING, T_NO_PHONE, T_NO_ANSWER, T_PHONE_LOST };
+  T_DELETE_LAST, T_DELETE_YES, T_CANCEL, T_PAUSE, T_RESUME, T_BEEP_ON, T_BEEP_OFF, T_CONNECTING, T_NO_PHONE, T_NO_ANSWER, T_PHONE_LOST, T_CONF_HEAD, T_CONF_HINT, T_DICTATED };
 static const char *T_EN[] = { "Loading …", "No messages yet.\nSELECT: speak\nhold SELECT: emoji, quick reply", "Emoji …",
   "Accept", "Decline", "Contact request", "Group invitation", "Voice not available", "New from %s", "Sending failed",
   "Delete my last message", "Yes, delete it", "Cancel", "Pause push", "Resume push", "Beep on", "Beep off",
   "Connecting to phone …", "Phone not connected.\nOpen the Pebble app on your phone – loading continues automatically.",
-  "No answer from phone.\nRetrying …", "Phone disconnected" };
+  "No answer from phone.\nRetrying …", "Phone disconnected", "Send this?", "SELECT: send\nBACK: discard", "dictated" };
 #define TR(i) (T_EN[i])
 static char s_status[160] = "…";
 
@@ -123,7 +124,7 @@ static ScrollLayer *s_scroll;
 static Layer *s_content;
 static TextLayer *s_banner;
 static AppTimer *s_banner_timer;
-static GFont s_font_body, s_font_head, s_font_name, s_font_mtitle, s_font_msub;
+static GFont s_font_body, s_font_head, s_font_name, s_font_mtitle, s_font_msub, s_font_meta;
 static int s_name_h;   /* Zeilenhöhe der Absender-/Titelschrift */
 #if defined(PBL_MICROPHONE)
 static DictationSession *s_dict;
@@ -243,10 +244,21 @@ static int text_width(void) {
 }
 static void measure(Msg *m) {
   m->emo_n = m->text ? emoji_parse(m->text, m->emo) : 0;
-  if (m->emo_n) { m->h = EMO + 4 + (m->mine ? 0 : s_name_h) + 2 * PAD + 6; return; }
+  if (m->emo_n) { m->h = EMO + 4 + (m->mine ? 0 : s_name_h) + 2 * PAD + 6 + META_H; return; }
   GSize s = graphics_text_layout_get_content_size(m->text ? m->text : "", s_font_body, GRect(0, 0, text_width(), 2000),
                                                   GTextOverflowModeWordWrap, GTextAlignmentLeft);
-  m->h = s.h + (m->mine ? 0 : s_name_h) + 2 * PAD + 6;
+  m->h = s.h + (m->mine ? 0 : s_name_h) + 2 * PAD + 6 + META_H;
+}
+/* Zeitzeile unter der Nachricht: heute nur Uhrzeit, sonst Datum + Uhrzeit (12/24 h nach Uhr-Einstellung), diktiert markiert */
+static void meta_text(const Msg *m, char *buf, size_t n) {
+  buf[0] = 0;
+  if (!m->ts) { if (m->voice) snprintf(buf, n, "%s", TR(T_DICTATED)); return; }
+  time_t t = m->ts, nw = time(NULL);
+  struct tm lt = *localtime(&t), ln = *localtime(&nw);
+  bool today = lt.tm_year == ln.tm_year && lt.tm_yday == ln.tm_yday;
+  const char *f = clock_is_24h_style() ? (today ? "%H:%M" : "%b %e, %H:%M") : (today ? "%l:%M %p" : "%b %e, %l:%M %p");
+  size_t l = strftime(buf, n, f, &lt);
+  if (m->voice && l < n) snprintf(buf + l, n - l, " · %s", TR(T_DICTATED));
 }
 static const char *empty_text(void) { return s_chat_failed ? s_status : s_chat_loading ? TR(T_LOADING) : TR(T_EMPTY_CHAT); }
 static int content_height(void) {
@@ -287,6 +299,10 @@ static void content_update(Layer *layer, GContext *ctx) {
         emoji_draw(ctx, m->emo[k], GPoint(ex + k * (EMO + 2), ty + 4), m->mine ? PBL_IF_COLOR_ELSE(soft(), FG) : BG);
     } else graphics_draw_text(ctx, m->text ? m->text : "", s_font_body, GRect(bx + 6, ty, bw - 12, 2000), GTextOverflowModeWordWrap,
                        m->mine ? GTextAlignmentRight : GTextAlignmentLeft, NULL);
+    char meta[40];
+    meta_text(m, meta, sizeof(meta));
+    if (meta[0]) graphics_draw_text(ctx, meta, s_font_meta, GRect(bx + 6, y + m->h - 7 - PAD - META_H, bw - 12, META_H + 4),
+                                    GTextOverflowModeTrailingEllipsis, m->mine ? GTextAlignmentRight : GTextAlignmentLeft, NULL);
     graphics_context_set_text_color(ctx, FG);
     y += m->h;
   }
@@ -304,23 +320,25 @@ static void msgs_clear(void) {
   for (int i = 0; i < s_msg_count; i++) { free(s_msgs[i].text); s_msgs[i].text = NULL; }
   s_msg_count = 0;
 }
-static void msg_set(Msg *m, const char *from, const char *text, bool mine) {
+static void msg_set(Msg *m, const char *from, const char *text, bool mine, time_t ts, bool voice) {
   free(m->text);
   size_t n = strlen(text) + 1;
   m->text = malloc(n);
   if (m->text) memcpy(m->text, text, n);
   strncpy(m->from, from, sizeof(m->from) - 1); m->from[sizeof(m->from) - 1] = 0;
   m->mine = mine;
+  m->ts = ts;
+  m->voice = voice;
   measure(m);
 }
-static void msg_append(const char *from, const char *text, bool mine) {
+static void msg_append(const char *from, const char *text, bool mine, time_t ts, bool voice) {
   if (s_msg_count == MAX_MSGS) {
     free(s_msgs[0].text);
     memmove(&s_msgs[0], &s_msgs[1], sizeof(Msg) * (MAX_MSGS - 1));
     s_msgs[MAX_MSGS - 1].text = NULL;
     s_msg_count--;
   }
-  msg_set(&s_msgs[s_msg_count++], from, text, mine);
+  msg_set(&s_msgs[s_msg_count++], from, text, mine, ts, voice);
 }
 
 static void pick_open(int mode, bool focus_qr);
@@ -331,11 +349,67 @@ static void start_talk(void) {
   pick_open(P_REPLY, true);
 }
 #if defined(PBL_MICROPHONE)
+/* Bestätigung vor dem Senden: ganzer erkannter Text zum Durchscrollen (Spracherkennung kann Sätze erfinden).
+   SELECT sendet, BACK verwirft. Ersetzt die System-Bestätigung, die lange Texte nicht vollständig zeigt. */
+static Window *s_conf_win;
+static ScrollLayer *s_conf_scroll;
+static TextLayer *s_conf_head, *s_conf_body;
+static char s_conf_msg[TEXT_BYTES], s_conf_text[TEXT_BYTES + 40];   /* erkannter Text / angezeigt mit Hinweis */
+static void conf_send(ClickRecognizerRef r, void *ctx) {
+  const char *t = s_conf_msg;
+  if (t[0] && s_open_chat[0]) {
+    msg_append("", t, true, time(NULL), true);
+    chat_relayout(true);
+    send_cmd(C_SEND_VOICE, s_open_chat, t);
+  }
+  window_stack_remove(s_conf_win, true);
+}
+static void conf_clicks(void *ctx) { window_single_click_subscribe(BUTTON_ID_SELECT, conf_send); }
+static void conf_load(Window *w) {
+  Layer *root = window_get_root_layer(w);
+  GRect b = layer_get_bounds(root);
+  int hh = s_name_h + 8, top = PBL_IF_ROUND_ELSE(14, 0);
+  window_set_background_color(w, BG);
+  s_conf_head = text_layer_create(GRect(0, top, b.size.w, hh));
+  text_layer_set_text(s_conf_head, TR(T_CONF_HEAD));
+  text_layer_set_font(s_conf_head, s_font_name);
+  text_layer_set_text_alignment(s_conf_head, GTextAlignmentCenter);
+  text_layer_set_background_color(s_conf_head, FG);
+  text_layer_set_text_color(s_conf_head, BG);
+  layer_add_child(root, text_layer_get_layer(s_conf_head));
+  GRect sr = GRect(0, top + hh, b.size.w, b.size.h - top - hh);
+  s_conf_scroll = scroll_layer_create(sr);
+  scroll_layer_set_click_config_onto_window(s_conf_scroll, w);
+  scroll_layer_set_callbacks(s_conf_scroll, (ScrollLayerCallbacks) { .click_config_provider = conf_clicks });
+  scroll_layer_set_shadow_hidden(s_conf_scroll, true);
+  int x0 = PAD + ROUND_INSET, tw = b.size.w - 2 * x0;
+  s_conf_body = text_layer_create(GRect(x0, 2, tw, 2000));
+  text_layer_set_text(s_conf_body, s_conf_text);
+  text_layer_set_font(s_conf_body, s_font_body);
+  text_layer_set_background_color(s_conf_body, GColorClear);
+  text_layer_set_text_color(s_conf_body, FG);
+  text_layer_set_text_alignment(s_conf_body, PBL_IF_ROUND_ELSE(GTextAlignmentCenter, GTextAlignmentLeft));
+  GSize cs = text_layer_get_content_size(s_conf_body);
+  layer_set_frame(text_layer_get_layer(s_conf_body), GRect(x0, 2, tw, cs.h + 8));
+  scroll_layer_add_child(s_conf_scroll, text_layer_get_layer(s_conf_body));
+  scroll_layer_set_content_size(s_conf_scroll, GSize(b.size.w, cs.h + PBL_IF_ROUND_ELSE(50, 14)));
+  layer_add_child(root, scroll_layer_get_layer(s_conf_scroll));
+}
+static void conf_unload(Window *w) {
+  text_layer_destroy(s_conf_body); text_layer_destroy(s_conf_head); scroll_layer_destroy(s_conf_scroll);
+  window_destroy(s_conf_win); s_conf_win = NULL;
+}
+static void conf_open(const char *text) {
+  if (s_conf_win) return;
+  snprintf(s_conf_msg, sizeof(s_conf_msg), "%s", text);
+  snprintf(s_conf_text, sizeof(s_conf_text), "%s\n\n%s", text, TR(T_CONF_HINT));
+  s_conf_win = window_create();
+  window_set_window_handlers(s_conf_win, (WindowHandlers) { .load = conf_load, .unload = conf_unload });
+  window_stack_push(s_conf_win, true);
+}
 static void dict_done(DictationSession *session, DictationSessionStatus status, char *text, void *ctx) {
   if (status == DictationSessionStatusSuccess && text && text[0]) {
-    msg_append("", text, true);
-    chat_relayout(true);
-    send_cmd(C_SEND_VOICE, s_open_chat, text);
+    conf_open(text);
   } else if (status != DictationSessionStatusFailureTranscriptionRejected) {
     banner_show(TR(T_NO_VOICE));
     pick_open(P_REPLY, true);
@@ -502,7 +576,7 @@ static void pick_mode(int mode) {
 }
 static void pick_send(const char *text) {
   if (!s_open_chat[0]) return;
-  msg_append("", text, true);
+  msg_append("", text, true, time(NULL), false);
   chat_relayout(true);
   send_cmd(C_SEND, s_open_chat, text);
 }
@@ -693,6 +767,7 @@ static void look_apply(bool light_was) {
 #endif
   s_font_body = fonts_get_system_font(FONT_BODY[s_look.font]);
   s_font_name = fonts_get_system_font(FONT_NAME[s_look.font]);
+  s_font_meta = fonts_get_system_font(FONT_KEY_GOTHIC_14);
   s_name_h = NAME_H[s_look.font];
   if (s_look.font) { s_font_mtitle = fonts_get_system_font(FONT_MTITLE[s_look.font]); s_font_msub = fonts_get_system_font(FONT_MSUB[s_look.font]); }
   for (int i = 0; i < s_msg_count; i++) measure(&s_msgs[i]);
@@ -738,13 +813,14 @@ static void inbox(DictionaryIterator *it, void *ctx) {
       s_chat_loading = false;
       s_chat_failed = false;
       if (count > 0 && idx == s_msg_count && idx < MAX_MSGS)
-        msg_set(&s_msgs[s_msg_count++], str(it, MESSAGE_KEY_FROM), str(it, MESSAGE_KEY_TEXT), num(it, MESSAGE_KEY_FLAGS) & 1);
+        msg_set(&s_msgs[s_msg_count++], str(it, MESSAGE_KEY_FROM), str(it, MESSAGE_KEY_TEXT), num(it, MESSAGE_KEY_FLAGS) & 1,
+                num(it, MESSAGE_KEY_TS), (num(it, MESSAGE_KEY_FLAGS) & 2) != 0);
       if (!s_chat_win) break;
       if (count == 0 || idx == count - 1 || idx == MAX_MSGS - 1) chat_relayout(true);
       break;
     case C_NEW_MSG: {
       bool here = s_chat_win && strcmp(str(it, MESSAGE_KEY_CHAT), s_open_chat) == 0;
-      if (here) { msg_append(str(it, MESSAGE_KEY_FROM), str(it, MESSAGE_KEY_TEXT), false); chat_relayout(true); }
+      if (here) { msg_append(str(it, MESSAGE_KEY_FROM), str(it, MESSAGE_KEY_TEXT), false, num(it, MESSAGE_KEY_TS), (num(it, MESSAGE_KEY_FLAGS) & 2) != 0); chat_relayout(true); }
       if (s_vibe && !quiet_time_is_active()) vibes_short_pulse();   /* Ruhemodus: weder Vibration noch Piep */
       roger_beep();
       if (!here && s_chat_win) {
@@ -804,7 +880,7 @@ static void init(void) {
   app_message_open(PBL_IF_ROUND_ELSE(1024, PBL_IF_COLOR_ELSE(1024, 700)), 640);
 #if defined(PBL_MICROPHONE)
   s_dict = dictation_session_create(TEXT_BYTES, dict_done, NULL);
-  if (s_dict) dictation_session_enable_confirmation(s_dict, true);
+  if (s_dict) dictation_session_enable_confirmation(s_dict, false);   /* eigene Bestätigung: conf_open */
 #endif
   s_main_win = window_create();
   window_set_window_handlers(s_main_win, (WindowHandlers) { .load = main_load, .unload = main_unload });
