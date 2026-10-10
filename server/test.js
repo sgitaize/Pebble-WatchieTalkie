@@ -288,6 +288,27 @@ async function main() {
     ok(!raw.includes(ro.body.token) && !/"th"|"cfg"|"pk"|"tl"|ntfy"/.test(raw), 'Admin: keine Token/Schlüssel/Push-Zugänge');
     ok((await adm('DELETE', '/v1/admin/users/to_' + sfx, 'test-admin-key')).status === 200 && (await api('GET', '/v1/me', null, ro.body.token)).status === 401, 'Admin: Konto gelöscht');
     ok((await adm('DELETE', '/v1/admin/users/to_' + sfx, 'test-admin-key')).status === 404, 'Admin: unbekanntes Konto → 404');
+    // Konto zurücksetzen: neuer Token, alter ungültig, Kontakte bleiben, Hinweis im Direktchat und in der Gruppe
+    const ra = await api('POST', '/v1/register', { name: 'ra_' + sfx }), rb = await api('POST', '/v1/register', { name: 'rb_' + sfx });
+    await api('PUT', '/v1/me', { pubKey: 'A'.repeat(43) + '=' }, ra.body.token);
+    await api('POST', '/v1/contacts', { name: 'rb_' + sfx }, ra.body.token);
+    await api('POST', '/v1/contacts/ra_' + sfx + '/accept', null, rb.body.token);
+    const rg = await api('POST', '/v1/groups', { title: 'Reset' }, ra.body.token);
+    const gid = rg.body.groups[0].id;
+    await api('POST', '/v1/groups/' + gid + '/invite', { name: 'rb_' + sfx }, ra.body.token);
+    await api('POST', '/v1/groups/' + gid + '/accept', null, rb.body.token);
+    ok((await adm('POST', '/v1/admin/users/ra_' + sfx + '/reset', 'falsch')).status === 401, 'Reset: falscher Schlüssel → 401');
+    ok((await adm('POST', '/v1/admin/users/xx_' + sfx + '/reset', 'test-admin-key')).status === 404, 'Reset: unbekanntes Konto → 404');
+    const rs = await adm('POST', '/v1/admin/users/ra_' + sfx + '/reset', 'test-admin-key');
+    ok(rs.status === 200 && /^[a-f0-9]{64}$/.test(rs.body.token) && rs.body.token !== ra.body.token && rs.body.chats === 2, 'Reset: neuer Token, 2 Chats');
+    ok((await api('GET', '/v1/me', null, ra.body.token)).status === 401, 'Reset: alter Token ungültig');
+    const me2 = await api('GET', '/v1/me', null, rs.body.token);
+    ok(me2.status === 200 && me2.body.pubKey === '' && me2.body.contacts.includes('rb_' + sfx) && me2.body.groups.length === 1, 'Reset: Konto mit Kontakten/Gruppe, Schlüssel verworfen');
+    const dm = await api('GET', '/v1/chats/u.ra_' + sfx + '/messages', null, rb.body.token);
+    const gm = await api('GET', '/v1/chats/g.' + gid + '/messages', null, rb.body.token);
+    const note = (r) => (r.body.msgs || r.body.messages || []).some((x) => x.f === 'watchietalkie' && x.t === 'ra_' + sfx + ' reset their account');
+    ok(note(dm) && note(gm), 'Reset: Hinweis im Direktchat und in der Gruppe');
+    await adm('DELETE', '/v1/admin/users/ra_' + sfx, 'test-admin-key'); await adm('DELETE', '/v1/admin/users/rb_' + sfx, 'test-admin-key');
   }
 }
 

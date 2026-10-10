@@ -111,7 +111,7 @@ docker compose up -d           # port 3000, data in the "data" volume; settings 
 
 Data is stored in `server/data/db.json` (ciphertext only) – copy the file to back it up. **If you run a public server, you must replace `public/impressum.html` (legal notice) with your own details.**
 
-**Admin page:** `https://<your server>/admin` – log in with the admin key. Shows counters and all accounts (metadata only: names, aliases, created/last seen, contact/group counts, push service; never tokens, keys, push credentials or messages) and lets you delete accounts. "Unsaved" accounts were registered but never saved to a phone (nobody can log in to them); a button removes those older than 24 h. Wrong keys are limited to 10 attempts per 10 minutes and IP.
+**Admin page:** `https://<your server>/admin` – log in with the admin key. Shows counters and all accounts (metadata only: names, aliases, created/last seen, contact/group counts, push service; never tokens, keys, push credentials or messages) and lets you delete accounts. **Reset** helps users who lost their phone without a transfer code: the server issues a new token (old phone stops working, public key and timeline token are dropped), the page creates a new secret key in your browser (the server never sees it) and shows a transfer code `WT1:…` for the new phone. Contacts and groups stay; every chat of the account shows "<name> reset their account" and contacts get the key-change warning. Old messages can't be read any more (end-to-end encryption). "Unsaved" accounts were registered but never saved to a phone (nobody can log in to them); a button removes those older than 24 h. Wrong keys are limited to 10 attempts per 10 minutes and IP.
 
 ### API (summary)
 
@@ -141,6 +141,7 @@ JSON, authentication with `Authorization: Bearer <device token>`. Chat IDs: `u.<
 | POST | `/v1/me/telegram` | `{bot}` connect Telegram bot (chat ID via getUpdates), `{bot: ''}` disconnects |
 | POST | `/v1/test` | `{delay?}` (0–60 s) test message from the server in the read-only chat `u.watchietalkie` (fixed plain text `t`, with phone/timeline notification) – 5 per 10 min |
 | GET · DELETE | `/v1/admin/users` · `/v1/admin/users/:name` | Admin only (`Authorization: Admin <key>`): account list + counters / delete account |
+| POST | `/v1/admin/users/:name/reset` | Admin only: new token for a lost account (`{ name, token, chats }`), drops public key, notifies all its chats |
 
 ## Development
 

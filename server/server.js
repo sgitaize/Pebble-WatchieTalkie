@@ -46,7 +46,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.10.0';
+const VERSION = '1.11.0';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -732,6 +732,32 @@ route('DELETE', /^\/v1\/admin\/users\/([a-z0-9_]{3,16})$/, false, (req, b, u, m)
   deleteUser(r);
   console.log('Admin-Löschung', m[1]);
   return { ok: true };
+});
+
+/* Konto zurücksetzen (Handy verloren, kein Übertragungscode): neuer Token, öffentlicher Schlüssel und Timeline-Token
+   werden verworfen. Name, Kontakte, Gruppen bleiben. Den neuen geheimen Schlüssel erzeugt die Admin-Seite im Browser –
+   der Server sieht ihn nie. In jedem Chat des Kontos erscheint ein Hinweis (Klartext wie Systemnachrichten). */
+route('POST', /^\/v1\/admin\/users\/([a-z0-9_]{3,16})\/reset$/, false, (req, b, u, m) => {
+  needAdmin(req);
+  const r = db.users[m[1]];
+  if (!r) fail(404, 'Nicht gefunden');
+  const token = crypto.randomBytes(32).toString('hex');
+  byToken.delete(r.th);
+  r.th = sha(token); r.pk = ''; r.pkTs = now(); r.tl = '';
+  byToken.set(r.th, r.name);
+  const t = r.name + ' reset their account';
+  const chats = [];
+  for (const n in r.contacts) if (r.contacts[n] === 'ok') chats.push({ key: dmKey(r.name, n), to: [n] });
+  for (const gid of r.groups) { const g = db.groups[gid]; if (g) chats.push({ key: 'g:' + g.id, to: g.members.filter((x) => x !== r.name) }); }
+  for (const c of chats) {
+    const ch = chatOf(c.key);
+    ch.msgs.push({ id: ++db.seq, f: SYSTEM, t, ts: now() });
+    if (ch.msgs.length > HISTORY_MAX) ch.msgs.splice(0, ch.msgs.length - HISTORY_MAX);
+  }
+  save();
+  for (const c of chats) for (const n of c.to) wake(n);
+  console.log('Admin-Reset', r.name, '(' + chats.length + ' Chats benachrichtigt)');
+  return { name: r.name, token, chats: chats.length };
 });
 
 /* Long-Polling: Wartende Abfragen je Nutzer; neue Nachrichten/Einladungen wecken sie sofort */

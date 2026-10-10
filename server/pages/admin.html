@@ -54,6 +54,9 @@
     </section>
   </div>
   <p id="msg"></p>
+  <div id="codeBox" class="hidden"><p>Transfer code for <b id="codeName"></b> – shown only once, not stored anywhere:</p>
+    <p><code id="codeOut" style="word-break:break-all;user-select:all"></code></p>
+    <div class="row"><button id="codeCopy">Copy</button><button id="codeClose">Close</button></div></div>
 </main>
 <script>
 'use strict';
@@ -103,10 +106,26 @@ function render() {
     const td = document.createElement('td'); const b = document.createElement('button');
     b.className = 'bad small'; b.textContent = 'Delete';
     b.onclick = () => del([u.name]);
-    td.appendChild(b); tr.appendChild(td); tb.appendChild(tr);
+    const rb = document.createElement('button');
+    rb.className = 'small'; rb.textContent = 'Reset'; rb.title = 'New transfer code (lost phone)';
+    rb.onclick = () => reset(u.name);
+    td.appendChild(rb); td.appendChild(b); tr.appendChild(td); tb.appendChild(tr);
   }
   if (!tb.children.length) tb.innerHTML = '<tr><td colspan="9" class="muted">No accounts</td></tr>';
 }
+/* Konto zurücksetzen: Server gibt neuen Token, der geheime Schlüssel entsteht hier im Browser (Server sieht ihn nie) */
+async function reset(name) {
+  if (!confirm('Reset "' + name + '"? The old phone stops working, old messages can no longer be read. Contacts and groups stay; they see "' + name + ' reset their account".')) return;
+  try {
+    const r = await api('POST', '/v1/admin/users/' + name + '/reset');
+    const sk = new Uint8Array(32); crypto.getRandomValues(sk);
+    const code = 'WT1:' + r.token + ':' + btoa(String.fromCharCode.apply(null, sk));
+    $('codeName').textContent = name; $('codeOut').textContent = code; $('codeBox').classList.remove('hidden');
+    msg('Account reset, ' + r.chats + ' chat(s) notified. Enter the transfer code in the settings on the new phone and save.', true);
+  } catch (e) { msg(name + ': ' + e.message); }
+}
+$('codeCopy').onclick = () => navigator.clipboard.writeText($('codeOut').textContent).then(() => msg('Copied', true), () => msg('Copy failed – select the code manually'));
+$('codeClose').onclick = () => { $('codeOut').textContent = ''; $('codeBox').classList.add('hidden'); };
 async function del(names) {
   if (!names.length) return msg('Nothing to delete', true);
   if (!confirm('Permanently delete ' + names.join(', ') + ' with all contacts and chats?')) return;
