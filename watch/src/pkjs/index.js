@@ -24,9 +24,8 @@ var pollTimer = null;
 var listOk = false;          // Chat-Liste steht (auch leer) auf der Uhr
 
 function platform() {
-  try { return Pebble.getActiveWatchInfo().platform; } catch (e) { return 'basalt'; }
+  try { return Pebble.getActiveWatchInfo().platform; } catch (e) { return 'emery'; }
 }
-function maxMsgs() { return platform() === 'aplite' ? 10 : 30; }
 
 /* ---------------------------------------------------------- Uhr-Warteschlange -- */
 var queue = [], sending = false;
@@ -43,41 +42,13 @@ function pump() {
   }
   attempt();
 }
-/* Die Uhr-Schriften kennen kaum Emojis → gängige in Text-Smileys umwandeln, übrige als (emoji) */
-var EMO = { '\uD83D\uDC4D': '(y)', '\uD83D\uDC4E': '(n)', '\uD83D\uDE00': ':D', '\uD83D\uDE03': ':D', '\uD83D\uDE04': ':D', '\uD83D\uDE01': ':D', '\uD83D\uDE02': 'xD', '\uD83E\uDD23': 'xD', '\uD83D\uDE0A': ':)', '\uD83D\uDE42': ':)',
-  '\uD83D\uDE09': ';)', '\uD83D\uDE0D': '<3', '\u2764': '<3', '\uD83D\uDE18': ':*', '\uD83D\uDE22': ":'(", '\uD83D\uDE2D': ":'(", '\uD83D\uDE2E': ':O', '\uD83D\uDE1B': ':P', '\uD83D\uDE1C': ';P', '\uD83D\uDE41': ':(',
-  '\uD83D\uDE1E': ':(', '\uD83D\uDE21': '>:(', '\uD83E\uDD14': '(?)', '\uD83D\uDC4B': 'o/', '\uD83C\uDF89': '\\o/', '\uD83D\uDE4F': '(thanks)', '\uD83D\uDC4C': '(ok)' };
-function plain(s) {
-  s = String(s || '');
-  for (var k in EMO) s = s.split(k).join(EMO[k]);
-  return s.replace(/[\uFE0F\u200D]/g, '').replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '(emoji)');
-}
-/* Nachricht nur aus 1–3 Emojis, die die Uhr als Bild hat (EMOJI[] in main.c)? → kanonische Emojis, sonst null.
-   Verwandte Emojis werden auf das nächste Bild abgebildet. */
-var EMO_IMG = ['\uD83D\uDC4D', '\uD83D\uDE0A', '\uD83D\uDE02', '\u2764', '\uD83D\uDE09', '\uD83D\uDE00', '\uD83D\uDE18', '\uD83D\uDE2E',
-  '\uD83D\uDE22', '\uD83D\uDE1E', '\uD83D\uDE21', '\uD83E\uDD14', '\uD83D\uDC4B', '\uD83C\uDF89', '\uD83D\uDE4F', '\uD83D\uDC4C', '\uD83D\uDC4E'];
-var EMO_ALIAS = { '\uD83D\uDE03': '\uD83D\uDE00', '\uD83D\uDE04': '\uD83D\uDE00', '\uD83D\uDE01': '\uD83D\uDE00', '\uD83E\uDD23': '\uD83D\uDE02',
-  '\uD83D\uDE42': '\uD83D\uDE0A', '\uD83D\uDE2D': '\uD83D\uDE22', '\uD83D\uDE41': '\uD83D\uDE1E', '\uD83D\uDE20': '\uD83D\uDE21' };
-function emojiOnly(s) {
-  var t = String(s || '').replace(/[\uFE0F\u200D\s]|\uD83C[\uDFFB-\uDFFF]/g, ''), out = [];
-  var parts = t.match(/[\uD800-\uDBFF][\uDC00-\uDFFF]|[\s\S]/g) || [];
-  if (!parts.length || parts.length > 3) return null;
-  for (var i = 0; i < parts.length; i++) {
-    var e = EMO_ALIAS[parts[i]] || parts[i];
-    if (EMO_IMG.indexOf(e) < 0) return null;
-    out.push(e);
-  }
-  return out.join('');
-}
-/* Nachrichtentext für die Uhr: reine Emoji-Nachricht als echte Emojis (Uhr zeigt Bilder), sonst Text */
 /* Server-Zeit (ms) → Sekunden für die Zeitzeile auf der Uhr; v = diktiert */
 function msgTs(msg) { return Math.floor((msg && msg.ts || 0) / 1000); }
-function msgText(s, bytes) { return emojiOnly(s) || trunc(s, bytes); }
-/* Text auf eine Byte-Länge (UTF-8) kürzen, ohne Zeichen zu zerschneiden */
+/* Text auf eine Byte-Länge (UTF-8) kürzen, ohne Zeichen zu zerschneiden. Emojis bleiben drin: PebbleOS zeichnet sie selbst. */
 function trunc(s, bytes) {
-  s = plain(s);
+  s = String(s || '');
   if (unescape(encodeURIComponent(s)).length <= bytes) return s;
-  while (s.length && unescape(encodeURIComponent(s + '…')).length > bytes) s = s.slice(0, -1);
+  while (s.length && unescape(encodeURIComponent(s + '…')).length > bytes) s = s.slice(0, /[\uD800-\uDBFF][\uDC00-\uDFFF]$/.test(s) ? -2 : -1);
   return s + '…';
 }
 function status(text) { toWatch({ CMD: C.STATUS, TEXT: trunc(text, 150) }); }
@@ -242,8 +213,7 @@ function loadChats() {
         items.push({ id: ch.id, title: ch.title, kind: K.CHAT, unread: Math.min(ch.unread, 99), text: prev });
       });
       lastInvites = c.invites;
-      var max = platform() === 'aplite' ? 12 : 20;
-      items = items.slice(0, max);
+      items = items.slice(0, 20);
       if (!items.length) {
         toWatch({ CMD: C.LIST_ITEM, IDX: 0, COUNT: 0 });
         return status(('Hi ' + m.name + '! No contacts yet - invite friends in the settings. Press SELECT for a test message.'));
@@ -256,7 +226,7 @@ function loadChats() {
 }
 
 function loadMessages(cid) {
-  api('GET', '/v1/chats/' + cid + '/messages?limit=' + maxMsgs(), null, function (err, r) {
+  api('GET', '/v1/chats/' + cid + '/messages?limit=30', null, function (err, r) {
     if (openChat !== cid) return;
     if (err && !transient(err)) return status(err.message);
     if (err) {
@@ -266,9 +236,8 @@ function loadMessages(cid) {
     retryDone('msgs');
     var msgs = r.msgs || [];
     if (!msgs.length) { toWatch({ CMD: C.MSG_ITEM, CHAT: cid, IDX: 0, COUNT: 0 }); return; }
-    var bytes = platform() === 'aplite' ? 200 : 400;
     msgs.forEach(function (msg, i) {
-      toWatch({ CMD: C.MSG_ITEM, CHAT: cid, IDX: i, COUNT: msgs.length, FROM: msg.f, TEXT: msgText(readable(msg), bytes),
+      toWatch({ CMD: C.MSG_ITEM, CHAT: cid, IDX: i, COUNT: msgs.length, FROM: msg.f, TEXT: trunc(readable(msg), 400),
         FLAGS: (msg.f === (me && me.name) ? 1 : 0) | (msg.v ? 2 : 0), TS: msgTs(msg) });
     });
     api('POST', '/v1/chats/' + cid + '/read', { upTo: msgs[msgs.length - 1].id }, function () {});
@@ -339,7 +308,7 @@ function poll() {
     if (r.seq >= seq) {
       fresh = (r.msgs || []).filter(function (msg) { return msg.id > seq; });
       fresh.forEach(function (msg) {
-        toWatch({ CMD: C.NEW_MSG, CHAT: msg.chat, FROM: msg.f, TEXT: msgText(readable(msg), platform() === 'aplite' ? 200 : 400),
+        toWatch({ CMD: C.NEW_MSG, CHAT: msg.chat, FROM: msg.f, TEXT: trunc(readable(msg), 400),
           FLAGS: msg.v ? 2 : 0, TS: msgTs(msg) });
         if (msg.chat === openChat) api('POST', '/v1/chats/' + msg.chat + '/read', { upTo: msg.id }, function () {});
       });

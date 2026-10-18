@@ -14,13 +14,8 @@ enum { K_CHAT = 0, K_CONTACT_INVITE = 1, K_GROUP_INVITE = 2 };
    2: Emoji wählen · 3: Löschen bestätigen · 4: Liste (Push pausieren, Piep an/aus) */
 enum { P_REPLY = 0, P_INVITE = 1, P_EMOJI = 2, P_DELETE = 3, P_LIST = 4 };
 
-#if defined(PBL_PLATFORM_APLITE)
-#define MAX_MSGS 10
-#define MAX_CHATS 12
-#else
 #define MAX_MSGS 30
 #define MAX_CHATS 20
-#endif
 #define MAX_QR 10
 #define TEXT_BYTES 512
 
@@ -69,14 +64,14 @@ static GColor soft(void) {
 #endif
 
 typedef struct { char id[20]; char title[26]; char preview[44]; uint8_t unread; uint8_t kind; } Chat;
-typedef struct { char *text; char from[17]; bool mine, voice; int16_t h; uint8_t emo[3], emo_n; time_t ts; } Msg;   /* emo: reine Emoji-Nachricht, voice: diktiert */
+typedef struct { char *text; char from[17]; bool mine, voice, big; int16_t h; time_t ts; } Msg;   /* big: reine Emoji-Nachricht, voice: diktiert */
 
 static Chat s_chats[MAX_CHATS];
 static int s_chat_count;
 /* Texte (nur Englisch) */
 enum { T_LOADING, T_EMPTY_CHAT, T_EMOJI, T_ACCEPT, T_DECLINE, T_CONTACT_REQ, T_GROUP_INV, T_NO_VOICE, T_NEW_FROM, T_SEND_FAILED,
   T_DELETE_LAST, T_DELETE_YES, T_CANCEL, T_PAUSE, T_RESUME, T_BEEP_ON, T_BEEP_OFF, T_CONNECTING, T_NO_PHONE, T_NO_ANSWER, T_PHONE_LOST, T_CONF_HEAD, T_CONF_HINT, T_DICTATED };
-static const char *T_EN[] = { "Loading …", "No messages yet.\nSELECT: speak\nhold SELECT: emoji, quick reply", "Emoji …",
+static const char *T_EN[] = { "Loading …", "No messages yet.\nSELECT: speak\nhold SELECT: emoji, quick reply", "\xF0\x9F\x98\x8A  Emoji …",
   "Accept", "Decline", "Contact request", "Group invitation", "Voice not available", "New from %s", "Sending failed",
   "Delete my last message", "Yes, delete it", "Cancel", "Pause push", "Resume push", "Beep on", "Beep off",
   "Connecting to phone …", "Phone not connected.\nOpen the Pebble app on your phone – loading continues automatically.",
@@ -184,58 +179,34 @@ static void banner_show(const char *text) {
 }
 
 /* ----------------------------------------------------------- Emoji -- */
-/* Die Uhr-Schriften haben keine Emojis → eigene Bilder (tools/emoji.py, Noto Color Emoji). Gesendet wird das echte Emoji;
-   Nachrichten, die nur aus 1–3 dieser Emojis bestehen, zeigt der Chat als Bilder (pkjs schickt sie dann unverändert). */
+/* PebbleOS ab 4.30 zeichnet Emojis selbst in den System-Schriften (Noto Emoji, 14–28 px, ab 4.39 farbig;
+   ZWJ, Hautfarben und FE0F blendet sie aus) – Emojis bleiben also einfach Text. */
 static const char *EMOJI[][2] = {
-  { "\xF0\x9F\x91\x8D", "Thumbs up" }, { "\xF0\x9F\x98\x8A", "Smile" }, { "\xF0\x9F\x98\x82", "Laughing" },
-  { "\xE2\x9D\xA4\xEF\xB8\x8F", "Heart" }, { "\xF0\x9F\x98\x89", "Wink" }, { "\xF0\x9F\x98\x80", "Grin" },
-  { "\xF0\x9F\x98\x98", "Kiss" }, { "\xF0\x9F\x98\xAE", "Surprised" }, { "\xF0\x9F\x98\xA2", "Crying" },
-  { "\xF0\x9F\x98\x9E", "Sad" }, { "\xF0\x9F\x98\xA1", "Angry" }, { "\xF0\x9F\xA4\x94", "Thinking" },
-  { "\xF0\x9F\x91\x8B", "Wave" }, { "\xF0\x9F\x8E\x89", "Party" }, { "\xF0\x9F\x99\x8F", "Thanks" },
-  { "\xF0\x9F\x91\x8C", "OK" }, { "\xF0\x9F\x91\x8E", "Thumbs down" },
+  { "\xF0\x9F\x91\x8D", "Thumbs up" }, { "\xE2\x9D\xA4\xEF\xB8\x8F", "Heart" }, { "\xF0\x9F\x98\x82", "Laughing" },
+  { "\xF0\x9F\x98\x8A", "Smile" }, { "\xF0\x9F\x98\x89", "Wink" }, { "\xF0\x9F\x98\x80", "Grin" },
+  { "\xF0\x9F\x98\x8D", "In love" }, { "\xF0\x9F\x98\x98", "Kiss" }, { "\xF0\x9F\x98\xAE", "Surprised" },
+  { "\xF0\x9F\x98\xA2", "Crying" }, { "\xF0\x9F\x98\x9E", "Sad" }, { "\xF0\x9F\x98\xA1", "Angry" },
+  { "\xF0\x9F\xA4\x94", "Thinking" }, { "\xF0\x9F\x98\x8E", "Cool" }, { "\xF0\x9F\x98\xB4", "Sleepy" },
+  { "\xF0\x9F\x99\x88", "Oops" }, { "\xF0\x9F\x91\x8B", "Wave" }, { "\xF0\x9F\x8E\x89", "Party" },
+  { "\xF0\x9F\x91\x8F", "Applause" }, { "\xF0\x9F\x92\xAA", "Strong" }, { "\xF0\x9F\x94\xA5", "Fire" },
+  { "\xF0\x9F\x99\x8F", "Thanks" }, { "\xF0\x9F\x91\x8C", "OK" }, { "\xE2\x9C\x85", "Done" },
+  { "\xF0\x9F\x91\x8E", "Thumbs down" },
 };
 #define EMOJI_N ((int)ARRAY_LENGTH(EMOJI))
-static const uint32_t EMOJI_RES[] = { RESOURCE_ID_EMOJI_00, RESOURCE_ID_EMOJI_01, RESOURCE_ID_EMOJI_02, RESOURCE_ID_EMOJI_03,
-  RESOURCE_ID_EMOJI_04, RESOURCE_ID_EMOJI_05, RESOURCE_ID_EMOJI_06, RESOURCE_ID_EMOJI_07, RESOURCE_ID_EMOJI_08, RESOURCE_ID_EMOJI_09,
-  RESOURCE_ID_EMOJI_10, RESOURCE_ID_EMOJI_11, RESOURCE_ID_EMOJI_12, RESOURCE_ID_EMOJI_13, RESOURCE_ID_EMOJI_14, RESOURCE_ID_EMOJI_15,
-  RESOURCE_ID_EMOJI_16 };
-#define EMO PBL_IF_COLOR_ELSE((PBL_DISPLAY_WIDTH >= 200 ? 36 : 28), 28)
-static GBitmap *s_emo_bmp[ARRAY_LENGTH(EMOJI)];   /* bei Bedarf geladen, freigegeben wenn Chat und Menü zu sind */
-static void emoji_free(void) {
-  for (int i = 0; i < EMOJI_N; i++) if (s_emo_bmp[i]) { gbitmap_destroy(s_emo_bmp[i]); s_emo_bmp[i] = NULL; }
-}
-/* Bild an p; S/W: Bild hat weißen Grund – auf schwarzem Grund als weiße Kachel */
-static void emoji_draw(GContext *ctx, int i, GPoint p, GColor under) {
-  if (!s_emo_bmp[i]) s_emo_bmp[i] = gbitmap_create_with_resource(EMOJI_RES[i]);
-  if (!s_emo_bmp[i]) return;
-  GRect r = GRect(p.x, p.y, EMO, EMO);
-#if defined(PBL_COLOR)
-  graphics_context_set_compositing_mode(ctx, GCompOpSet);
-#else
-  if (gcolor_equal(under, GColorBlack)) { graphics_context_set_fill_color(ctx, GColorWhite); graphics_fill_rect(ctx, grect_inset(r, GEdgeInsets(-2)), 5, GCornersAll); }
-  graphics_context_set_compositing_mode(ctx, GCompOpAssign);
-#endif
-  graphics_draw_bitmap_in_rect(ctx, s_emo_bmp[i], r);
-  graphics_context_set_compositing_mode(ctx, GCompOpAssign);
-}
-/* Text nur aus 1–3 Tabellen-Emojis (Leerzeichen/FE0F egal)? → Indizes nach out, Anzahl; sonst 0 */
-static int emoji_parse(const char *t, uint8_t *out) {
-  int n = 0;
-  while (*t) {
-    if (*t == ' ') { t++; continue; }
-    if (!strncmp(t, "\xEF\xB8\x8F", 3)) { t += 3; continue; }
-    int k = -1;
-    size_t l = 0;
-    for (int i = 0; i < EMOJI_N && k < 0; i++) {
-      l = strlen(EMOJI[i][0]);
-      if (l > 4 && !strcmp(EMOJI[i][0] + l - 3, "\xEF\xB8\x8F")) l -= 3;   /* Herz: ohne Variantenzeichen vergleichen */
-      if (!strncmp(t, EMOJI[i][0], l)) k = i;
-    }
-    if (k < 0 || n == 3) return 0;
-    out[n++] = k;
-    t += l;
+#define FONT_BIG FONT_KEY_GOTHIC_28_BOLD   /* größte Emoji-Stufe der Firmware (28 px) */
+static GFont s_font_big;
+/* Text nur aus 1–3 Emojis (Leerzeichen, FE0F, ZWJ, Hautfarben egal)? → im Chat groß */
+static bool emoji_only(const char *t) {
+  int n = 0, cont = 0;
+  uint32_t cp = 0;
+  for (const uint8_t *u = (const uint8_t *)t; *u; u++) {
+    if (cont) { cp = cp << 6 | (*u & 0x3F); if (--cont) continue; }
+    else if (*u < 0x80) { if (*u == ' ') continue; return false; }
+    else { cont = *u >= 0xF0 ? 3 : *u >= 0xE0 ? 2 : 1; cp = *u & (0x3F >> cont); continue; }
+    if (cp == 0xFE0F || cp == 0x200D || (cp >= 0x1F3FB && cp <= 0x1F3FF)) continue;
+    if (cp < 0x2190 || ++n > 3) return false;
   }
-  return n;
+  return n > 0;
 }
 
 /* ------------------------------------------------------------- Chat -- */
@@ -243,9 +214,8 @@ static int text_width(void) {
   return PBL_DISPLAY_WIDTH - 2 * PAD - 2 * ROUND_INSET - 24;
 }
 static void measure(Msg *m) {
-  m->emo_n = m->text ? emoji_parse(m->text, m->emo) : 0;
-  if (m->emo_n) { m->h = EMO + 4 + (m->mine ? 0 : s_name_h) + 2 * PAD + 6 + META_H; return; }
-  GSize s = graphics_text_layout_get_content_size(m->text ? m->text : "", s_font_body, GRect(0, 0, text_width(), 2000),
+  m->big = m->text && emoji_only(m->text);
+  GSize s = graphics_text_layout_get_content_size(m->text ? m->text : "", m->big ? s_font_big : s_font_body, GRect(0, 0, text_width(), 2000),
                                                   GTextOverflowModeWordWrap, GTextAlignmentLeft);
   m->h = s.h + (m->mine ? 0 : s_name_h) + 2 * PAD + 6 + META_H;
 }
@@ -293,12 +263,8 @@ static void content_update(Layer *layer, GContext *ctx) {
       graphics_draw_text(ctx, m->from, s_font_name, GRect(bx + 6, ty, bw - 12, s_name_h + 6), GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
       ty += s_name_h;
     }
-    if (m->emo_n) {                               /* reine Emoji-Nachricht: Bilder, eigene rechtsbündig */
-      int ex = m->mine ? bx + bw - 6 - m->emo_n * (EMO + 2) : bx + 6;
-      for (int k = 0; k < m->emo_n; k++)
-        emoji_draw(ctx, m->emo[k], GPoint(ex + k * (EMO + 2), ty + 4), m->mine ? PBL_IF_COLOR_ELSE(soft(), FG) : BG);
-    } else graphics_draw_text(ctx, m->text ? m->text : "", s_font_body, GRect(bx + 6, ty, bw - 12, 2000), GTextOverflowModeWordWrap,
-                       m->mine ? GTextAlignmentRight : GTextAlignmentLeft, NULL);
+    graphics_draw_text(ctx, m->text ? m->text : "", m->big ? s_font_big : s_font_body, GRect(bx + 6, ty, bw - 12, 2000),
+                       GTextOverflowModeWordWrap, m->mine ? GTextAlignmentRight : GTextAlignmentLeft, NULL);
     char meta[40];
     meta_text(m, meta, sizeof(meta));
     if (meta[0]) graphics_draw_text(ctx, meta, s_font_meta, GRect(bx + 6, y + m->h - 7 - PAD - META_H, bw - 12, META_H + 4),
@@ -456,7 +422,6 @@ static void chat_unload(Window *w) {
   send_cmd(C_CLOSE, s_open_chat, NULL);
   s_open_chat[0] = 0;
   msgs_clear();
-  if (!s_pick_win) emoji_free();
 }
 static void watchdog_arm(void);
 static void show_load_status(const char *t);
@@ -521,28 +486,18 @@ static uint16_t pick_rows(MenuLayer *m, uint16_t s, void *ctx) {
   if (s_pick_mode == P_EMOJI) return EMOJI_N;
   return pick_opts() + (s_pick_mode == P_REPLY ? s_qr_count : 0);
 }
-/* Zeile mit Emoji-Bild links vom Titel (Bild nur, wenn die Zeile hoch genug ist) */
-static void icon_cell(GContext *ctx, const Layer *cell, int e, const char *title) {
-  GRect b = layer_get_bounds(cell);
-  GFont f = s_look.font ? s_font_mtitle : fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
-  int fh = s_look.font ? MTITLE_H : 26, iw = b.size.h >= EMO + 2 ? EMO + 6 : 0;
-#if defined(PBL_ROUND)
-  int x = (b.size.w - iw - graphics_text_layout_get_content_size(title, f, GRect(0, 0, b.size.w - iw - 10, fh + 4),
-                                                   GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft).w) / 2;
-#else
-  int x = 5;
-#endif
-  if (iw) emoji_draw(ctx, e, GPoint(x, (b.size.h - EMO) / 2), menu_cell_layer_is_highlighted(cell) ? FG : BG);
-  graphics_draw_text(ctx, title, f, GRect(x + iw, (b.size.h - fh) / 2 - 4, b.size.w - x - iw - 2, fh + 4),
-                     GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-}
 static void pick_draw(GContext *ctx, const Layer *cell, MenuIndex *idx, void *data) {
   int r = idx->row;
-  if (s_pick_mode == P_EMOJI) { icon_cell(ctx, cell, r, EMOJI[r][1]); return; }
+  if (s_pick_mode == P_EMOJI) {
+    char t[32];
+    snprintf(t, sizeof(t), "%s  %s", EMOJI[r][0], EMOJI[r][1]);
+    cell_draw(ctx, cell, t, NULL);
+    return;
+  }
   if (s_pick_mode == P_INVITE) { cell_draw(ctx, cell, TR(r == 0 ? T_ACCEPT : T_DECLINE), NULL); return; }
   if (s_pick_mode == P_DELETE) { cell_draw(ctx, cell, TR(r == 0 ? T_DELETE_YES : T_CANCEL), NULL); return; }
   switch (row_kind(r)) {
-    case R_EMOJI: icon_cell(ctx, cell, 0, TR(T_EMOJI)); break;
+    case R_EMOJI: cell_draw(ctx, cell, TR(T_EMOJI), NULL); break;
     case R_DELETE: cell_draw(ctx, cell, TR(T_DELETE_LAST), NULL); break;
     case R_PAUSE: {
       static char sub[20];
@@ -557,16 +512,14 @@ static void pick_draw(GContext *ctx, const Layer *cell, MenuIndex *idx, void *da
 }
 static int16_t pick_row_h(MenuLayer *m, MenuIndex *idx, void *ctx) {
   bool focused = menu_layer_is_index_selected(m, idx);
-  if (s_pick_mode == P_EMOJI) return s_look.font ? cell_h(false, true) : EMO + 10;
   bool reply = s_pick_mode == P_LIST || s_pick_mode == P_REPLY;
-  if (reply && row_kind(idx->row) == R_EMOJI) return cell_h(false, true);
   return cell_h(reply && row_kind(idx->row) == R_PAUSE, focused);
 }
 static void pick_select(MenuLayer *m, MenuIndex *idx, void *ctx);
-/* Schriftgröße 0: Standard-Zeilenhöhen des Systems (außer in der Emoji-Auswahl) */
+/* Schriftgröße 0: Standard-Zeilenhöhen des Systems */
 static void pick_callbacks(void) {
   menu_layer_set_callbacks(s_pick_menu, NULL, (MenuLayerCallbacks) { .get_num_rows = pick_rows, .draw_row = pick_draw,
-    .select_click = pick_select, .get_cell_height = s_look.font || s_pick_mode == P_EMOJI ? pick_row_h : NULL });
+    .select_click = pick_select, .get_cell_height = s_look.font ? pick_row_h : NULL });
 }
 static void pick_mode(int mode) {
   s_pick_mode = mode;
@@ -624,7 +577,6 @@ static void pick_load(Window *w) {
 }
 static void pick_unload(Window *w) {
   menu_layer_destroy(s_pick_menu); s_pick_menu = NULL; window_destroy(w); s_pick_win = NULL;
-  if (!s_chat_win) emoji_free();
 }
 /* focus_qr: direkt auf der ersten Schnellantwort starten (Uhr ohne Mikrofon / Diktat fehlgeschlagen) */
 static void pick_open(int mode, bool focus_qr) {
@@ -768,6 +720,7 @@ static void look_apply(bool light_was) {
   s_font_body = fonts_get_system_font(FONT_BODY[s_look.font]);
   s_font_name = fonts_get_system_font(FONT_NAME[s_look.font]);
   s_font_meta = fonts_get_system_font(FONT_KEY_GOTHIC_14);
+  s_font_big = fonts_get_system_font(FONT_BIG);
   s_name_h = NAME_H[s_look.font];
   if (s_look.font) { s_font_mtitle = fonts_get_system_font(FONT_MTITLE[s_look.font]); s_font_msub = fonts_get_system_font(FONT_MSUB[s_look.font]); }
   for (int i = 0; i < s_msg_count; i++) measure(&s_msgs[i]);
