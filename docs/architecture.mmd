@@ -1,0 +1,21 @@
+flowchart LR
+  W("<b>Watch app</b><br/><small><code>watch/src/c/main.c</code></small><br/><small>list · chat · dictation</small>")
+  subgraph Phone["Phone · Pebble app"]
+    C("<b>Settings page</b><br/><small><code>docs/config/</code> · GitHub Pages</small>")
+    P("<b>PebbleKit JS</b><br/><small><code>index.js · e2e.js</code></small><br/><small>encrypts / decrypts (TweetNaCl)</small>")
+  end
+  S("<b>Server</b><br/><small><code>server/server.js</code></small><br/><small>Node.js · JSON storage</small><br/><small>sees only ciphertext</small>")
+  N("<b>Push service</b><br/><small>ntfy · Telegram · Pushover</small><br/><small>only while the app is closed</small>")
+  W <-->|AppMessage| P
+  C -->|"token · keys · look"| P
+  P <-->|"HTTPS · long polling"| S
+  S -.->|"“New message: sender”"| N
+
+  classDef client stroke:#58a6ff,stroke-width:1.5px
+  classDef core stroke:#f0883e,stroke-width:1.5px
+  classDef server stroke:#3fb950,stroke-width:1.5px
+  classDef ext stroke:#a371f7,stroke-width:1.5px
+  class W,C client
+  class P core
+  class S server
+  class N ext

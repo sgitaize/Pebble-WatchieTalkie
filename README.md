@@ -35,11 +35,15 @@ Then allow notifications for this app in the Pebble app. **Entirely optional:** 
 
 ## Architecture
 
-```
-Watch (C) ⇄ AppMessage ⇄ PebbleKit JS (phone, encrypts/decrypts) ⇄ HTTPS/JSON ⇄ Server (Node.js, sees only ciphertext)
-                                                                      ▲
-                                        Settings page (GitHub Pages) ─┘
-```
+<p align="center"><img src="docs/architecture.png" alt="Architecture: Pebble watch app, PebbleKit JS on the phone (encryption), settings page, Node.js server, push service" width="100%"></p>
+
+<sub>Source: <a href="docs/architecture.mmd">docs/architecture.mmd</a> (Mermaid)</sub>
+
+**How it works**
+- **The watch only shows and records:** list, chat and dictation run in C on the watch and talk to the phone via AppMessage.
+- **The phone encrypts:** PebbleKit JS encrypts and decrypts every message with TweetNaCl (`nacl.box`), so the server only ever stores ciphertext.
+- **The server is a mailbox:** accounts, contacts, groups and the last 50 messages per chat; long polling while the app is open, nothing in the background.
+- **Notifications while the app is closed** go out as a short notice (sender only, never the content) through ntfy, Telegram or Pushover.
 
 | Folder | Contents |
 |---|---|
