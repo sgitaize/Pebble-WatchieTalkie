@@ -1,6 +1,6 @@
 """Erzeugt die Emoji-Bilder der Uhr aus Noto Color Emoji (SIL OFL 1.1).
 Aufruf: uv run --with pillow python tools/emoji.py [Pfad/zu/NotoColorEmoji.ttf]
-Ausgabe: resources/emoji/{c28,c36,bw28}/NN.png – Reihenfolge = EMOJI[] in src/c/main.c."""
+Ausgabe: resources/emoji/{c28,bw28}/NN.png – Reihenfolge = EMOJI[] in src/c/main.c (nur aplite/basalt/chalk/diorite; neuere Uhren zeichnen Emojis per PebbleOS)."""
 import os, sys
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
@@ -40,7 +40,7 @@ def bw(im, n):
 
 for i, e in enumerate(EMOJI):
     g = glyph(e)
-    for d, f in (("c28", lambda: color(g, 28)), ("c36", lambda: color(g, 36)), ("bw28", lambda: bw(g, 28))):
+    for d, f in (("c28", lambda: color(g, 28)), ("bw28", lambda: bw(g, 28))):
         os.makedirs(os.path.join(out, d), exist_ok=True)
         f().save(os.path.join(out, d, "%02d.png" % i))
 print("ok", len(EMOJI))

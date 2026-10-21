@@ -14,7 +14,7 @@ WatchieTalkie2 is a **continuation of the former [Watchie-Talkie](https://apps.r
 - **Chat history:** last 50 messages per chat, at most 30 days
 - **End-to-end encryption:** the server operator cannot read messages
 - **Notifications while the app is closed (optional)** via [ntfy](https://ntfy.sh) (including your own server), your own Telegram bot, or [Pushover](https://pushover.net) – see [Why a phone notification?](#why-a-phone-notification)
-- **All Pebble models:** Pebble / Steel (aplite), Time / Time Steel (basalt), Time Round (chalk), Pebble 2 (diorite), Time 2 (emery), Pebble 2 Duo (flint), Round 2 (gabbro)
+- **All Pebble models:** Pebble / Steel (aplite), Time / Time Steel (basalt), Time Round (chalk), Pebble 2 (diorite), Time 2 (emery), Pebble 2 Duo (flint), Round 2 (gabbro) – every feature on every model. Emoji: on Time 2, Pebble 2 Duo and Round 2 PebbleOS draws them itself (every emoji, color from PebbleOS 4.39 on); the older models, which don't get that firmware, show the picker and emoji-only messages as pictures and other emoji as text smileys
 - **Adjustable look**: text size (small, large bold, extra large bold), background and text color, backlight stays on while the app is open (optional) – set in the settings, stored per phone
 - **Radio beep** for new messages through the speaker (Time 2, Pebble 2 Duo, Round 2; can be turned off – on the watch: long SELECT in the list → Beep on/off; in Quiet Time there is neither beep nor vibration)
 - **Battery-friendly:** long polling only while the app is open (a request waits up to 25 s and returns immediately when something new arrives), no background activity otherwise
@@ -56,7 +56,7 @@ Then allow notifications for this app in the Pebble app. **Entirely optional:** 
 
 1. Install WatchieTalkie2 from the Pebble App Store: [apps.repebble.com/5baaf5505dcf4454bdab0478](https://apps.repebble.com/5baaf5505dcf4454bdab0478)
 2. In the Pebble app, open **Settings** for WatchieTalkie2: choose a username, invite friends by username, create groups, set up quick replies, **Save**.
-3. On the watch: pick a chat → **SELECT** = speak, **long SELECT** = menu: emoji (shown as pictures), delete your own last message, pause push – quick replies below, **up/down** = scroll. Invitations appear at the top of the list and can be accepted right on the watch.
+3. On the watch: pick a chat → **SELECT** = speak, **long SELECT** = menu: emoji (drawn by PebbleOS on Time 2 / Pebble 2 Duo / Round 2, pictures on older models; emoji-only messages larger), delete your own last message, pause push – quick replies below, **up/down** = scroll. Invitations appear at the top of the list and can be accepted right on the watch.
 4. New phone: show the **transfer code** in the settings and enter it on the new phone under "I already have an account" (it contains your access and secret key – never share it).
 
 ## Security
@@ -173,4 +173,4 @@ The Pebble SDK currently does not allow apps to record audio from the microphone
 
 ## License
 
-[MIT](LICENSE) – free to use, including commercially, as long as the copyright notice is retained. TweetNaCl-js: public domain. Emoji images on the watch: rendered from [Noto Color Emoji](https://github.com/googlefonts/noto-emoji) (SIL Open Font License 1.1) with `watch/tools/emoji.py`. Idea and name inspired by the former Watchie-Talkie for Pebble.
+[MIT](LICENSE) – free to use, including commercially, as long as the copyright notice is retained. TweetNaCl-js: public domain. Emoji images on the older watches: rendered from [Noto Color Emoji](https://github.com/googlefonts/noto-emoji) (SIL Open Font License 1.1) with `watch/tools/emoji.py`. Idea and name inspired by the former Watchie-Talkie for Pebble.

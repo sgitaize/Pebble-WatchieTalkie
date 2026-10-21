@@ -26,6 +26,8 @@ var listOk = false;          // Chat-Liste steht (auch leer) auf der Uhr
 function platform() {
   try { return Pebble.getActiveWatchInfo().platform; } catch (e) { return 'basalt'; }
 }
+/* Time 2 / Pebble 2 Duo / Round 2: aktuelle PebbleOS zeichnet Emojis selbst → unverändert senden (main.c: SYS_EMOJI) */
+function sysEmoji() { return ['emery', 'flint', 'gabbro'].indexOf(platform()) >= 0; }
 function maxMsgs() { return platform() === 'aplite' ? 10 : 30; }
 
 /* ---------------------------------------------------------- Uhr-Warteschlange -- */
@@ -43,7 +45,7 @@ function pump() {
   }
   attempt();
 }
-/* Die Uhr-Schriften kennen kaum Emojis → gängige in Text-Smileys umwandeln, übrige als (emoji) */
+/* Ältere Uhren: Schriften ohne Emojis → gängige in Text-Smileys umwandeln, übrige als (emoji) */
 var EMO = { '\uD83D\uDC4D': '(y)', '\uD83D\uDC4E': '(n)', '\uD83D\uDE00': ':D', '\uD83D\uDE03': ':D', '\uD83D\uDE04': ':D', '\uD83D\uDE01': ':D', '\uD83D\uDE02': 'xD', '\uD83E\uDD23': 'xD', '\uD83D\uDE0A': ':)', '\uD83D\uDE42': ':)',
   '\uD83D\uDE09': ';)', '\uD83D\uDE0D': '<3', '\u2764': '<3', '\uD83D\uDE18': ':*', '\uD83D\uDE22': ":'(", '\uD83D\uDE2D': ":'(", '\uD83D\uDE2E': ':O', '\uD83D\uDE1B': ':P', '\uD83D\uDE1C': ';P', '\uD83D\uDE41': ':(',
   '\uD83D\uDE1E': ':(', '\uD83D\uDE21': '>:(', '\uD83E\uDD14': '(?)', '\uD83D\uDC4B': 'o/', '\uD83C\uDF89': '\\o/', '\uD83D\uDE4F': '(thanks)', '\uD83D\uDC4C': '(ok)' };
@@ -72,12 +74,12 @@ function emojiOnly(s) {
 /* Nachrichtentext für die Uhr: reine Emoji-Nachricht als echte Emojis (Uhr zeigt Bilder), sonst Text */
 /* Server-Zeit (ms) → Sekunden für die Zeitzeile auf der Uhr; v = diktiert */
 function msgTs(msg) { return Math.floor((msg && msg.ts || 0) / 1000); }
-function msgText(s, bytes) { return emojiOnly(s) || trunc(s, bytes); }
-/* Text auf eine Byte-Länge (UTF-8) kürzen, ohne Zeichen zu zerschneiden */
+function msgText(s, bytes) { return (!sysEmoji() && emojiOnly(s)) || trunc(s, bytes); }
+/* Text auf eine Byte-Länge (UTF-8) kürzen, ohne Zeichen zu zerschneiden (auch keine Emojis) */
 function trunc(s, bytes) {
-  s = plain(s);
+  s = sysEmoji() ? String(s || '') : plain(s);
   if (unescape(encodeURIComponent(s)).length <= bytes) return s;
-  while (s.length && unescape(encodeURIComponent(s + '…')).length > bytes) s = s.slice(0, -1);
+  while (s.length && unescape(encodeURIComponent(s + '…')).length > bytes) s = s.slice(0, /[\uD800-\uDBFF][\uDC00-\uDFFF]$/.test(s) ? -2 : -1);
   return s + '…';
 }
 function status(text) { toWatch({ CMD: C.STATUS, TEXT: trunc(text, 150) }); }

@@ -1,7 +1,7 @@
 {
   "name": "watchietalkie",
   "author": "Simon Gutjahr",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "keywords": [
     "pebble-app"
   ],
@@ -63,19 +63,9 @@
           "file": "emoji/bw28/00.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_00",
-          "file": "emoji/c36/00.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -92,19 +82,9 @@
           "file": "emoji/bw28/01.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_01",
-          "file": "emoji/c36/01.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -121,19 +101,9 @@
           "file": "emoji/bw28/02.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_02",
-          "file": "emoji/c36/02.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -150,19 +120,9 @@
           "file": "emoji/bw28/03.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_03",
-          "file": "emoji/c36/03.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -179,19 +139,9 @@
           "file": "emoji/bw28/04.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_04",
-          "file": "emoji/c36/04.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -208,19 +158,9 @@
           "file": "emoji/bw28/05.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_05",
-          "file": "emoji/c36/05.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -237,19 +177,9 @@
           "file": "emoji/bw28/06.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_06",
-          "file": "emoji/c36/06.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -266,19 +196,9 @@
           "file": "emoji/bw28/07.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_07",
-          "file": "emoji/c36/07.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -295,19 +215,9 @@
           "file": "emoji/bw28/08.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_08",
-          "file": "emoji/c36/08.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -324,19 +234,9 @@
           "file": "emoji/bw28/09.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_09",
-          "file": "emoji/c36/09.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -353,19 +253,9 @@
           "file": "emoji/bw28/10.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_10",
-          "file": "emoji/c36/10.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -382,19 +272,9 @@
           "file": "emoji/bw28/11.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_11",
-          "file": "emoji/c36/11.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -411,19 +291,9 @@
           "file": "emoji/bw28/12.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_12",
-          "file": "emoji/c36/12.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -440,19 +310,9 @@
           "file": "emoji/bw28/13.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_13",
-          "file": "emoji/c36/13.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -469,19 +329,9 @@
           "file": "emoji/bw28/14.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_14",
-          "file": "emoji/c36/14.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -498,19 +348,9 @@
           "file": "emoji/bw28/15.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_15",
-          "file": "emoji/c36/15.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         },
         {
           "type": "bitmap",
@@ -527,19 +367,9 @@
           "file": "emoji/bw28/16.png",
           "targetPlatforms": [
             "aplite",
-            "diorite",
-            "flint"
+            "diorite"
           ],
           "memoryFormat": "1Bit"
-        },
-        {
-          "type": "bitmap",
-          "name": "EMOJI_16",
-          "file": "emoji/c36/16.png",
-          "targetPlatforms": [
-            "emery",
-            "gabbro"
-          ]
         }
       ]
     }
