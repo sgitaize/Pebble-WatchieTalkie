@@ -83,6 +83,30 @@ async function main() {
   ok(r.body.msgs.length === 10 && r.body.msgs[9].id === lastId, 'Historie mit Limit');
   ok((await api('GET', '/v1/chats/u.' + A + '/messages', null, tc)).status === 404, 'Fremder Chat gesperrt');
 
+  // Sprachnachrichten (Audio): Lautsprecher-Meldung, Hochladen, Abrufen, Grenzen
+  ok(info.body.audioSec === 30, 'Info nennt Audio-Höchstdauer');
+  await api('PUT', '/v1/me', { dev: { spk: true, rec: false } }, tb);
+  ok(!(await api('GET', '/v1/keys', null, ta)).body.voice.includes(B), 'nur Lautsprecher ohne Mikrofon reicht nicht');
+  await api('PUT', '/v1/me', { dev: { spk: true, rec: true } }, tb);
+  r = await api('GET', '/v1/keys', null, ta);
+  ok(Array.isArray(r.body.voice) && r.body.voice.includes(B) && !r.body.voice.includes(A), '/v1/keys meldet Kontakte mit Lautsprecher und Mikrofon');
+  const audio = rnd(9000);
+  r = await api('POST', '/v1/chats/u.' + B + '/audio', { e: enc([A, B]), audio }, ta);
+  ok(r.status === 200 && r.body.msg.a === 9000, 'Sprachnachricht hochgeladen, Größe in a');
+  const audId = r.body.msg.id;
+  r = await api('GET', '/v1/chats/u.' + A + '/audio/' + audId, null, tb);
+  ok(r.status === 200 && r.body.audio === audio, 'Empfänger lädt Audiodaten');
+  ok((await api('GET', '/v1/chats/u.' + A + '/audio/' + audId, null, tc)).status === 404, 'Audio für Fremde gesperrt');
+  ok((await api('GET', '/v1/chats/u.' + A + '/audio/' + lastId, null, tb)).status === 404, 'Textnachricht hat kein Audio');
+  r = await api('GET', '/v1/chats/u.' + A + '/messages?limit=1', null, tb);
+  ok(r.body.msgs[0].a === 9000, 'Verlauf zeigt Sprachnachricht');
+  ok((await api('POST', '/v1/chats/u.' + B + '/audio', { e: enc([A, B]), audio: 'kein base64!' }, ta)).status === 400, 'kaputtes Audio abgelehnt');
+  ok((await api('POST', '/v1/chats/u.' + B + '/audio', { e: enc([A, B]), audio: rnd(125000) }, ta)).status === 400, 'zu langes Audio abgelehnt');
+  ok((await api('POST', '/v1/chats/u.' + B + '/audio', { e: enc([A, B]), audio: rnd(200000) }, ta)).status === 413, 'zu große Anfrage abgelehnt');
+  ok((await api('DELETE', '/v1/chats/u.' + B + '/messages/' + audId, null, ta)).status === 200, 'Sprachnachricht gelöscht');
+  ok((await api('GET', '/v1/chats/u.' + A + '/audio/' + audId, null, tb)).status === 404, 'gelöschte Sprachnachricht nicht mehr abrufbar');
+  lastId = (await api('POST', '/v1/chats/u.' + B + '/messages', { e: enc([A, B]) }, ta)).body.msg.id;
+
   // Long-Polling: ohne Neues wartet die Abfrage, eine neue Nachricht weckt sie sofort
   const st0 = (await api('GET', '/v1/stats')).body;
   let t0 = Date.now();
@@ -98,6 +122,7 @@ async function main() {
   lastId = r.body.seq;
   const st1 = (await api('GET', '/v1/stats')).body;
   ok(st1.messages === st0.messages && st1.voice === st0.voice, 'Testkonten zählen nicht in der Statistik');
+  ok(Array.isArray(st1.days) && st1.days.length === 14 && st1.days[13].day === new Date().toISOString().slice(0, 10) && typeof st1.audio === 'number', 'Statistik: 14-Tage-Zeitleiste und Audio-Zähler');
   // nur lokal: echte Konten würden die Live-Statistik verändern
   if (child) { const rx = await api('POST', '/v1/register', { name: 'tx_' + sfx }); const rz = await api('POST', '/v1/register', { name: 'tz_' + sfx });
     await api('POST', '/v1/contacts', { name: 'tz_' + sfx }, rx.body.token); await api('POST', '/v1/contacts/tx_' + sfx + '/accept', null, rz.body.token);

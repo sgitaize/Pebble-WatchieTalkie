@@ -20,11 +20,18 @@
   .tag{margin:10px 0 0;font-size:18px;opacity:.95}
   .sub{margin:4px 0 0;font-size:14px;opacity:.85}
   main{padding:22px 16px 40px}
-  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:-44px 0 18px}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:-44px 0 18px}
   .kpi{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
   .kpi .v{font-size:30px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.15}
   .kpi .l{color:var(--muted);font-size:14px}
-  @media (max-width:520px){.kpis{grid-template-columns:1fr}.kpi .v{font-size:26px}}
+  @media (max-width:720px){.kpis{grid-template-columns:repeat(2,1fr)}}
+  @media (max-width:420px){.kpis{grid-template-columns:1fr}.kpi .v{font-size:26px}}
+  .chart svg{display:block;width:100%;height:auto;overflow:visible}
+  .chart .grid{stroke:var(--line);stroke-width:1}
+  .chart .ax{fill:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+  .chart .bm{fill:var(--accent)}.chart .ba{fill:var(--two)}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 0;color:var(--muted);font-size:14px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:baseline}
   section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:0 0 14px}
   h2{font-size:19px;margin:0 0 8px}h3{font-size:15px;margin:14px 0 4px}
   ul{margin:6px 0;padding-left:20px}li{margin:4px 0}
@@ -59,11 +66,19 @@
 
 <main class="wrap">
   <div class="kpis" aria-live="polite">
-    <div class="kpi"><div class="v" id="kUsers">–</div><div class="l" data-de="registrierte Nutzer">registered users</div></div>
+    <div class="kpi"><div class="v" id="kUsers">–</div><div class="l" data-de="registrierte Nutzer*innen">registered users</div></div>
     <div class="kpi"><div class="v" id="kMsgs">–</div><div class="l" data-de="verschickte Nachrichten">messages sent</div></div>
     <div class="kpi"><div class="v" id="kVoice">–</div><div class="l" data-de="davon gesprochen (diktiert)">of them spoken (dictated)</div></div>
+    <div class="kpi"><div class="v" id="kAudio">–</div><div class="l" data-de="davon Sprachnachrichten (Audio)">of them voice memos (audio)</div></div>
   </div>
   <p class="muted" id="kSince">&nbsp;</p>
+
+  <section class="chart">
+    <h2 data-de="Letzte 14 Tage">Last 14 days</h2>
+    <div id="days" role="img" aria-label="Messages per day"></div>
+    <div class="legend"><span><i style="background:var(--accent)"></i><span data-de="Textnachrichten">text messages</span></span>
+      <span><i style="background:var(--two)"></i><span data-de="Sprachnachrichten (Audio)">voice memos (audio)</span></span></div>
+  </section>
 
   <section>
     <h2 data-de="Was dieser Server macht">What this server does</h2>
@@ -135,8 +150,32 @@ fetch('v1/info').then((r) => r.json()).then((i) => {
     (i.registration === 'open' ? (DE ? 'Registrierung offen' : 'open registration') : (DE ? 'Registrierung nur mit Code' : 'registration by code only'));
   if (i.donate) { $('donate').href = i.donate; $('donateBox').classList.remove('hidden'); }
 }).catch(() => { $('srv').textContent = DE ? 'Server nicht erreichbar.' : 'Server unreachable.'; });
+/* Zeitleiste: je Tag ein Balken, unten Text-, oben Sprachnachrichten (gestapelt) */
+function drawDays(days) {
+  const W = 560, H = 150, top = 8, bot = 22, left = 28, n = days.length, step = (W - left) / n, bw = Math.max(6, step * 0.62);
+  const max = Math.max(4, ...days.map((d) => d.messages));
+  const nice = Math.pow(10, Math.floor(Math.log10(max))), yMax = Math.ceil(max / nice) * nice;
+  const y = (v) => top + (H - top - bot) * (1 - v / yMax);
+  const loc = DE ? 'de-DE' : 'en-US';
+  let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">';
+  for (const v of [0, yMax / 2, yMax]) svg += '<line class="grid" x1="' + left + '" x2="' + W + '" y1="' + y(v) + '" y2="' + y(v) + '"/><text class="ax" x="' + (left - 6) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + fmt(v) + '</text>';
+  days.forEach((d, i) => {
+    const x = left + i * step + (step - bw) / 2, text = d.messages - d.audio, date = new Date(d.day + 'T12:00:00Z');
+    const label = date.toLocaleDateString(loc, { day: 'numeric', month: 'short' });
+    const tip = label + ': ' + fmt(d.messages) + (DE ? ' Nachrichten, davon ' : ' messages, ') + fmt(d.audio) + (DE ? ' Sprachnachrichten' : ' voice memos');
+    svg += '<g><title>' + tip + '</title>';
+    if (text > 0) svg += '<rect class="bm" x="' + x + '" y="' + y(text) + '" width="' + bw + '" height="' + (y(0) - y(text)) + '" rx="2"/>';
+    if (d.audio > 0) svg += '<rect class="ba" x="' + x + '" y="' + y(d.messages) + '" width="' + bw + '" height="' + (y(text) - y(d.messages)) + '" rx="2"/>';
+    svg += '<rect x="' + (left + i * step) + '" y="' + top + '" width="' + step + '" height="' + (H - top - bot) + '" fill="transparent"/></g>';
+    if (i % 2 === (n - 1) % 2) svg += '<text class="ax" x="' + (x + bw / 2) + '" y="' + (H - 6) + '" text-anchor="middle">' + label + '</text>';
+  });
+  $('days').innerHTML = svg + '</svg>';
+  $('days').setAttribute('aria-label', days.map((d) => d.day + ': ' + d.messages).join(', '));
+}
 fetch('v1/stats').then((r) => r.json()).then((s) => {
   $('kUsers').textContent = fmt(s.users); $('kMsgs').textContent = fmt(s.messages); $('kVoice').textContent = fmt(s.voice);
+  $('kAudio').textContent = fmt(s.audio);
+  if (Array.isArray(s.days)) drawDays(s.days);
   $('kSince').textContent = (DE ? 'Gezählt seit ' : 'Counted since ') + new Date(s.since).toLocaleDateString(DE ? 'de-DE' : 'en-US');
 }).catch(() => {});
 </script>

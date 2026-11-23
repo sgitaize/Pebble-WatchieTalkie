@@ -107,19 +107,39 @@ function encrypt(text, recipients) {
     var nr = nacl.randomBytes(24);
     e.k[name] = b64enc(concat([nr, nacl.box(K, nr, pk, sk)]));
   }
+  Object.defineProperty(e, '_K', { value: K, enumerable: false, configurable: true });   // für encryptAudio, nicht in JSON
   return e;
+}
+/* Nachrichtenschlüssel K aus dem eigenen Umschlag (box authentifiziert den Absender) oder null */
+function openKey(e, senderPkB64) {
+  var sk = secretKey(), pk = b64dec(senderPkB64), env = b64dec(e && e.k);
+  if (!sk || !pk || !env || env.length < 40) return null;
+  return nacl.box.open(env.subarray(24), env.subarray(0, 24), pk, sk) || null;
 }
 /* {v, n, c, k: eigener Umschlag} + öffentlicher Schlüssel des Absenders → Text oder null */
 function decrypt(e, senderPkB64) {
   try {
-    var sk = secretKey(), pk = b64dec(senderPkB64), env = b64dec(e && e.k), n = b64dec(e && e.n), c = b64dec(e && e.c);
-    if (!sk || !pk || !env || !n || !c || env.length < 40 || n.length !== 24) return null;
-    var K = nacl.box.open(env.subarray(24), env.subarray(0, 24), pk, sk);
-    if (!K) return null;
+    var K = openKey(e, senderPkB64), n = b64dec(e && e.n), c = b64dec(e && e.c);
+    if (!K || !n || !c || n.length !== 24) return null;
     var m = nacl.secretbox.open(c, n, K);
     return m ? fromUtf8(m) : null;
   } catch (x) { return null; }
 }
+/* Sprachnachricht: Hinweistext wie encrypt(), Audiodaten (Uint8Array) mit demselben Nachrichtenschlüssel K und eigener Nonce
+   → { e, audio: Base64(Nonce ‖ secretbox) } */
+function encryptAudio(text, bytes, recipients) {
+  var e = encrypt(text, recipients), K = e._K, n = nacl.randomBytes(24);
+  delete e._K;
+  return { e: e, audio: b64enc(concat([n, nacl.secretbox(bytes, n, K)])) };
+}
+/* Audiodaten entschlüsseln (Umschlag e der Nachricht) → Uint8Array oder null */
+function decryptAudio(e, senderPkB64, audioB64) {
+  try {
+    var K = openKey(e, senderPkB64), a = b64dec(audioB64);
+    if (!K || !a || a.length < 40) return null;
+    return nacl.secretbox.open(a.subarray(24), a.subarray(0, 24), K) || null;
+  } catch (x) { return null; }
+}
 
 module.exports = { init: init, ready: ready, publicKey: publicKey, setKeys: setKeys, fingerprint: fingerprint,
-  encrypt: encrypt, decrypt: decrypt, b64enc: b64enc, b64dec: b64dec, nacl: nacl };
+  encrypt: encrypt, decrypt: decrypt, encryptAudio: encryptAudio, decryptAudio: decryptAudio, b64enc: b64enc, b64dec: b64dec, nacl: nacl };

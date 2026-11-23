@@ -16,9 +16,10 @@ WatchieTalkie2 is a **continuation of the former [Watchie-Talkie](https://apps.r
 - **Notifications while the app is closed (optional)** via [ntfy](https://ntfy.sh) (including your own server), your own Telegram bot, or [Pushover](https://pushover.net) – see [Why a phone notification?](#why-a-phone-notification)
 - **All Pebble models:** Pebble / Steel (aplite), Time / Time Steel (basalt), Time Round (chalk), Pebble 2 (diorite), Time 2 (emery), Pebble 2 Duo (flint), Round 2 (gabbro) – every feature on every model. Emoji: on Time 2, Pebble 2 Duo and Round 2 PebbleOS draws them itself (every emoji, color from PebbleOS 4.39 on); the older models, which don't get that firmware, show the picker and emoji-only messages as pictures and other emoji as text smileys
 - **Adjustable look**: text size (small, large bold, extra large bold), background and text color, backlight stays on while the app is open (optional) – set in the settings, stored per phone
+- **Voice messages (audio)** between Pebble Time 2 and Pebble 2 Duo (microphone and speaker): hold SELECT in a chat → 🎤 Voice message, up to 30 s, SELECT sends. Offered only when both sides (in groups: everyone) have a microphone and a speaker – the app reports this to the server in the background. Played back through the watch speaker (hold SELECT → 🔊 Play latest / Voice messages …). End-to-end encrypted like text; other watches see a short notice instead
 - **Radio beep** for new messages through the speaker (Time 2, Pebble 2 Duo, Round 2; can be turned off – on the watch: long SELECT in the list → Beep on/off; in Quiet Time there is neither beep nor vibration)
 - **Battery-friendly:** long polling only while the app is open (a request waits up to 25 s and returns immediately when something new arrives), no background activity otherwise
-- **Lightweight server:** Node.js with no dependencies, a single file, JSON storage; info page with statistics (users, messages, how many dictated); Docker supported
+- **Lightweight server:** Node.js with no dependencies, a single file, JSON storage; info page with statistics (users, messages, how many dictated, voice messages, last 14 days); Docker supported
 
 ## Why a phone notification?
 A Pebble app cannot listen for messages while it is closed. In the past a server sent timeline pins for this, but the new Pebble app (Core) does not fetch timeline pins from servers. What remains is a regular phone notification that the Pebble app forwards to the watch. For this, the server sends a short notice ("New message: sender" or "Contact request from name", never the content) to a service of your choice (settings page → "Phone notification"):
@@ -56,7 +57,7 @@ Then allow notifications for this app in the Pebble app. **Entirely optional:** 
 
 1. Install WatchieTalkie2 from the Pebble App Store: [apps.repebble.com/5baaf5505dcf4454bdab0478](https://apps.repebble.com/5baaf5505dcf4454bdab0478)
 2. In the Pebble app, open **Settings** for WatchieTalkie2: choose a username, invite friends by username, create groups, set up quick replies, **Save**.
-3. On the watch: pick a chat → **SELECT** = speak, **long SELECT** = menu: emoji (drawn by PebbleOS on Time 2 / Pebble 2 Duo / Round 2, pictures on older models; emoji-only messages larger), delete your own last message, pause push – quick replies below, **up/down** = scroll. Invitations appear at the top of the list and can be accepted right on the watch.
+3. On the watch: pick a chat → **SELECT** = speak, **long SELECT** = menu: voice message (record / play, Time 2 and Pebble 2 Duo), emoji (drawn by PebbleOS on Time 2 / Pebble 2 Duo / Round 2, pictures on older models; emoji-only messages larger), delete your own last message, pause push – quick replies below, **up/down** = scroll. Invitations appear at the top of the list and can be accepted right on the watch.
 4. New phone: show the **transfer code** in the settings and enter it on the new phone under "I already have an account" (it contains your access and secret key – never share it).
 
 ## Security
@@ -65,7 +66,8 @@ Then allow notifications for this app in the Pebble app. **Entirely optional:** 
 
 - **Randomness:** the iOS environment of the Pebble app has no `crypto.getRandomValues`. Therefore the settings page (real browser randomness) generates keys and a 32-byte seed; the app derives from it using SHA-512, a counter and – where available – system randomness.
 - **Safety numbers:** the settings page shows your own number and those of your contacts. Comparing them once in person rules out a server operator slipping in fake keys. If a contact's key changes, the app warns you.
-- **Not encrypted (metadata):** usernames, who is in contact with whom, group names and members, time and approximate length of messages. Notifications (ntfy, Telegram, Pushover, timeline) contain only the sender, never the content; the chosen service therefore sees the sender's name.
+- **Voice messages:** the audio (8 kHz IMA-ADPCM, ≈ 4 KB/s) is encrypted on the phone with the same random message key as its notice text (`secretbox`, own nonce); the server stores only the ciphertext as a separate file and deletes it together with the message.
+- **Not encrypted (metadata):** usernames, who is in contact with whom, group names and members, time and approximate length of messages (for voice messages: the duration), and whether someone's watch has a microphone and speaker. Notifications (ntfy, Telegram, Pushover, timeline) contain only the sender, never the content; the chosen service therefore sees the sender's name.
 
 **Protection against tampering (server).**
 - Access via a random 256-bit device token; the server stores only its SHA-256 hash.
@@ -105,7 +107,8 @@ docker compose up -d           # port 3000, data in the "data" volume; settings 
 | `REGISTER_CODE` | – | Registration only with this code (private server for friends) |
 | `MAX_USERS` | 1000 | Maximum number of accounts |
 | `HISTORY_MAX` | 50 | Messages per chat |
-| `HISTORY_DAYS` | 30 | Messages older than … days are deleted |
+| `HISTORY_DAYS` | 30 | Messages older than … days are deleted (voice message files too) |
+| `VOICE` | on | `off` = don't accept voice messages (audio files in `data/audio/`, ≈ 160 KB per 30 s) |
 | `TIMELINE_API` | `https://timeline-api.rebble.io` | Timeline service for notifications (Rebble app only), `off` = disabled |
 | `NTFY_URL` | `https://ntfy.sh` | Suggested ntfy server for phone notifications, `off` = ntfy disabled (users can enter their own https server) |
 | `PUSHOVER_TOKEN` | – | Pushover application token for all users (otherwise everyone enters their own) |
@@ -124,11 +127,11 @@ JSON, authentication with `Authorization: Bearer <device token>`. Chat IDs: `u.<
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/v1/info` | Server info |
-| GET | `/v1/stats` | Public counters: users, groups, messages, how many dictated |
+| GET | `/v1/stats` | Public counters: users, groups, messages, how many dictated, voice messages (`audio`), last 14 days (`days`) |
 | POST | `/v1/register` | `{name, code?}` → `{name, token}` |
 | GET / PUT / DELETE | `/v1/me` | Profile, settings (`cfg`, incl. `push` = `''`/`ntfy`/`telegram`/`pushover`, `ntfy`, `ntfyUrl`, `poUser`, `poToken`), `pubKey`, `timelineToken`, delete account |
 | POST · DELETE | `/v1/me/aliases` · `/v1/me/aliases/:name` | `{name}` add alias (max. 3) / remove |
-| GET | `/v1/keys` | Public keys of contacts and group members |
+| GET | `/v1/keys` | Public keys of contacts and group members; `voice` = those whose watch has microphone and speaker |
 | POST | `/v1/contacts` | `{name}` invite (accepts if the other user has already invited you) |
 | POST | `/v1/contacts/:name/accept` | Accept invitation |
 | DELETE | `/v1/contacts/:name` | Remove contact / decline / withdraw |
@@ -139,6 +142,8 @@ JSON, authentication with `Authorization: Bearer <device token>`. Chat IDs: `u.<
 | DELETE | `/v1/groups/:id/members/:name` | Owner only: remove member / withdraw invitation |
 | GET | `/v1/chats` | Chat list with unread counters |
 | GET · POST | `/v1/chats/:id/messages` | History (`?limit=`) / send `{e, voice?}` (`voice` only counts for statistics) |
+| POST | `/v1/chats/:id/audio` | Voice message `{e, audio}` (`e` = encrypted notice text, `audio` = Base64 of nonce ‖ secretbox, max. 30 s) |
+| GET | `/v1/chats/:id/audio/:msgId` | Encrypted audio of a voice message |
 | DELETE | `/v1/chats/:id/messages/:msgId` | Delete your own message (for everyone) |
 | POST | `/v1/chats/:id/read` | `{upTo}` mark as read |
 | GET | `/v1/poll?since=&wait=&invites=` | Everything new since message number (`del` = chats with deleted messages); with `wait` (≤ 25 s) long polling |
@@ -167,9 +172,9 @@ WatchieTalkie2 is a free, ad-free hobby project. If you would like to support th
 
 <a href="https://www.paypal.com/donate/?hosted_button_id=LGAZB9PR4YV5L"><img src="store/buy-me-a-spezi.svg" alt="Buy me a Spezi" height="40"></a>
 
-## Voice messages?
+## Voice messages
 
-The Pebble SDK currently does not allow apps to record audio from the microphone – only the finished dictation as text. Real voice messages are therefore not possible; spoken messages arrive as text (and are counted as "dictated" in the statistics). Playback through the speaker would work – once a recording API becomes available, this can be added.
+Since SDK 4.44 PebbleOS lets apps stream the microphone to their phone part (`mic_stream_to_phone_start`). WatchieTalkie2 uses it on Pebble Time 2 and Pebble 2 Duo – the models with both a microphone and a speaker. The phone downsamples to 8 kHz, encodes IMA-ADPCM, encrypts and uploads; for playback the watch requests the audio piece by piece into a small ring buffer and decodes it on the fly. There is no transcription: turning audio into text would need a service that hears it, which end-to-end encryption rules out – use dictation for text. Older watches keep dictation and see a notice for voice messages.
 
 ## License
 

@@ -4,17 +4,19 @@
  * Nachrichten werden hier ver- und entschlüsselt (e2e.js) – der Server sieht nur Chiffretext.
  */
 var E2E = require('./e2e');
+var AUDIO = require('./audio');
 E2E.init({ get: function (k) { return localStorage.getItem(k); }, set: function (k, v) { localStorage.setItem(k, v); } });
 var DEFAULT_SERVER = 'https://watchietalkie.aize-it.de';
 var CONFIG_URL = 'https://sgitaize.github.io/Pebble-WatchieTalkie/config/';
-var C = { LIST_ITEM: 2, MSG_ITEM: 5, NEW_MSG: 7, QR_ITEM: 8, STATUS: 9, SENT: 10,
-  READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25, SEND_VOICE: 26, TEST: 27, BEEP: 28, DELETE: 29, PAUSE: 30, PUSH: 11, LOOK: 12 };
+var C = { LIST_ITEM: 2, MSG_ITEM: 5, NEW_MSG: 7, QR_ITEM: 8, STATUS: 9, SENT: 10, AUD_DATA: 13,
+  REC_END: 31, PLAY: 32, AUD_MORE: 33, READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25, SEND_VOICE: 26, TEST: 27, BEEP: 28, DELETE: 29, PAUSE: 30, PUSH: 11, LOOK: 12 };
 var SYS_CID = 'u.watchietalkie';     // System-Chat des Servers (Testnachrichten, nur lesbar)
 var K = { CHAT: 0, CONTACT_INVITE: 1, GROUP_INVITE: 2 };
 
 var server = localStorage.getItem('wt.server') || DEFAULT_SERVER;
 var token = localStorage.getItem('wt.token') || '';
 var keys = {};               // Name → öffentlicher Schlüssel (vom Server, gegen gespeicherte Stände geprüft)
+var voiceNames = [];         // Kontakte/Gruppenmitglieder, deren Uhr Lautsprecher und Mikrofon hat (Sprachnachrichten)
 var TEXT_MAX = 300;
 var me = null;               // Antwort von /v1/me
 var seq = -1;                // höchste bekannte Nachrichten-Nummer
@@ -28,6 +30,11 @@ function platform() {
 }
 /* Time 2 / Pebble 2 Duo / Round 2: aktuelle PebbleOS zeichnet Emojis selbst → unverändert senden (main.c: SYS_EMOJI) */
 function sysEmoji() { return ['emery', 'flint', 'gabbro'].indexOf(platform()) >= 0; }
+/* Sprachnachrichten: aufnehmen per Mikrofon-Stream ans Handy (aktuelle PebbleOS), abspielen über den Lautsprecher.
+   Beides können nur Time 2 und Pebble 2 Duo; die App meldet es dem Server (/v1/me dev). Angeboten wird eine Sprachnachricht
+   nur, wenn beide Seiten (in Gruppen: alle) Lautsprecher und Mikrofon haben. */
+function canRecord() { return ['emery', 'flint'].indexOf(platform()) >= 0; }
+function hasSpeaker() { return ['emery', 'flint'].indexOf(platform()) >= 0; }
 function maxMsgs() { return platform() === 'aplite' ? 10 : 30; }
 
 /* ---------------------------------------------------------- Uhr-Warteschlange -- */
@@ -166,6 +173,7 @@ function loadKeys(cb) {
     var pins = {}, changed = [];
     try { pins = JSON.parse(localStorage.getItem('wt.pins') || '{}'); } catch (e) { pins = {}; }
     keys = r.keys || {};
+    voiceNames = r.voice || [];
     for (var n in keys) {
       if (pins[n] && pins[n] !== keys[n] && n !== (me && me.name)) changed.push(n);
       pins[n] = keys[n];
@@ -187,11 +195,28 @@ function readable(msg) {
   var t = pk ? E2E.decrypt(msg.e, pk) : null;
   return t === null ? '[unreadable]' : t;
 }
-/* Empfänger eines Chats mit Schlüsseln; fehlende Schlüssel werden gemeldet */
-function recipients(cid) {
+/* Die anderen Teilnehmer*innen eines Chats */
+function chatNames(cid) {
   var names = [];
   if (cid.charAt(0) === 'u') names = [cid.slice(2)];
   else (me && me.groups || []).forEach(function (g) { if ('g.' + g.id === cid) names = g.members.filter(function (n) { return n !== me.name; }); });
+  return names;
+}
+/* Sprachnachricht in diesen Chat möglich? Eigene Uhr und alle Gegenüber haben Lautsprecher und Mikrofon, Server erlaubt es */
+function voiceOk(cid) {
+  if (!canRecord() || !hasSpeaker() || cid === SYS_CID || !(me && me.server && me.server.audioSec > 0)) return false;
+  var names = chatNames(cid);
+  return names.length > 0 && names.every(function (n) { return voiceNames.indexOf(n) >= 0; });
+}
+/* Text einer Sprachnachricht auf der Uhr (Uhren ohne Lautsprecher bekommen einen Hinweis) */
+function voiceLabel(a, short) {
+  var d = AUDIO.fmt(AUDIO.durationDs(a));
+  if (hasSpeaker() || short) return (sysEmoji() ? '\uD83D\uDD0A ' : '') + 'Voice message ' + d;
+  return (sysEmoji() ? '\uD83C\uDFA4 ' : '') + 'Voice message ' + d + ' (play it on a Pebble with speaker)';
+}
+/* Empfänger eines Chats mit Schlüsseln; fehlende Schlüssel werden gemeldet */
+function recipients(cid) {
+  var names = chatNames(cid);
   var r = {}, missing = [];
   r[me.name] = E2E.publicKey();
   names.forEach(function (n) { if (keys[n]) r[n] = keys[n]; else missing.push(n); });
@@ -224,6 +249,8 @@ function loadChats() {
   api('GET', '/v1/me', null, function (err, m) {
     if (err) return listFailed(err);
     me = m;
+    var dev = { spk: hasSpeaker(), rec: canRecord() };   // im Hintergrund: kann diese Uhr Sprachnachrichten abspielen/aufnehmen?
+    if (!m.dev || m.dev.spk !== dev.spk || m.dev.rec !== dev.rec) api('PUT', '/v1/me', { dev: dev }, function () {});
     sendQuickReplies();
     if (!E2E.ready()) {
       toWatch({ CMD: C.LIST_ITEM, IDX: 0, COUNT: 0 });
@@ -239,7 +266,7 @@ function loadChats() {
       m.invitesIn.forEach(function (n) { items.push({ id: 'u.' + n, title: n, kind: K.CONTACT_INVITE, unread: 0, text: '' }); });
       m.groupInvites.forEach(function (g) { items.push({ id: 'g.' + g.id, title: g.title, kind: K.GROUP_INVITE, unread: 0, text: '' }); });
       c.chats.forEach(function (ch) {
-        var prev = ch.last ? (ch.group && ch.last.f !== m.name ? ch.last.f + ': ' : (ch.last.f === m.name ? 'You: ' : '')) + readable(ch.last) : (ch.group ? 'Group' : '');
+        var prev = ch.last ? (ch.group && ch.last.f !== m.name ? ch.last.f + ': ' : (ch.last.f === m.name ? 'You: ' : '')) + (ch.last.a ? voiceLabel(ch.last.a, true) : readable(ch.last)) : (ch.group ? 'Group' : '');
         if (!ch.group && changedList().indexOf(ch.title) >= 0) prev = '! Key changed';
         items.push({ id: ch.id, title: ch.title, kind: K.CHAT, unread: Math.min(ch.unread, 99), text: prev });
       });
@@ -251,12 +278,23 @@ function loadChats() {
         return status(('Hi ' + m.name + '! No contacts yet - invite friends in the settings. Press SELECT for a test message.'));
       }
       items.forEach(function (it, i) {
-        toWatch({ CMD: C.LIST_ITEM, IDX: i, COUNT: items.length, CHAT: it.id, TITLE: trunc(it.title, 25), TEXT: trunc(it.text, 43), UNREAD: it.unread, KIND: it.kind });
+        toWatch({ CMD: C.LIST_ITEM, IDX: i, COUNT: items.length, CHAT: it.id, TITLE: trunc(it.title, 25), TEXT: trunc(it.text, 43), UNREAD: it.unread, KIND: it.kind,
+          FLAGS: it.kind === K.CHAT && voiceOk(it.id) ? 1 : 0 });
       });
     }); });
   });
 }
 
+/* Nachricht für die Uhr; Sprachnachrichten mit MID (zum Abspielen), DUR (Zehntelsekunden) und FLAGS-Bit 4 */
+var audioMsgs = {};          // Nachrichten-Nummer → { chat, f, e } für Sprachnachrichten (zum Entschlüsseln beim Abspielen)
+function watchMsg(msg, cid, bytes) {
+  var d = { TEXT: msg.a ? voiceLabel(msg.a) : msgText(readable(msg), bytes), FLAGS: (msg.f === (me && me.name) ? 1 : 0) | (msg.v ? 2 : 0), TS: msgTs(msg) };
+  if (msg.a) {
+    audioMsgs[msg.id] = { chat: cid, f: msg.f, e: msg.e };
+    if (hasSpeaker()) { d.FLAGS |= 4; d.MID = msg.id; d.DUR = AUDIO.durationDs(msg.a); }
+  }
+  return d;
+}
 function loadMessages(cid) {
   api('GET', '/v1/chats/' + cid + '/messages?limit=' + maxMsgs(), null, function (err, r) {
     if (openChat !== cid) return;
@@ -270,8 +308,7 @@ function loadMessages(cid) {
     if (!msgs.length) { toWatch({ CMD: C.MSG_ITEM, CHAT: cid, IDX: 0, COUNT: 0 }); return; }
     var bytes = platform() === 'aplite' ? 200 : 400;
     msgs.forEach(function (msg, i) {
-      toWatch({ CMD: C.MSG_ITEM, CHAT: cid, IDX: i, COUNT: msgs.length, FROM: msg.f, TEXT: msgText(readable(msg), bytes),
-        FLAGS: (msg.f === (me && me.name) ? 1 : 0) | (msg.v ? 2 : 0), TS: msgTs(msg) });
+      toWatch(Object.assign({ CMD: C.MSG_ITEM, CHAT: cid, IDX: i, COUNT: msgs.length, FROM: msg.f }, watchMsg(msg, cid, bytes)));
     });
     api('POST', '/v1/chats/' + cid + '/read', { upTo: msgs[msgs.length - 1].id }, function () {});
   });
@@ -287,6 +324,70 @@ function sendMessage(cid, text, voice) {
   try { e = E2E.encrypt(String(text).slice(0, TEXT_MAX), r.keys); } catch (x) { return fail('Encryption failed'); }
   api('POST', '/v1/chats/' + cid + '/messages', { e: e, voice: !!voice }, function (err) {
     toWatch(err ? { CMD: C.SENT, FLAGS: 0, TEXT: trunc(errText(err), 60) } : { CMD: C.SENT, FLAGS: 1 });
+  });
+}
+
+/* ------------------------------------------------------ Sprachnachrichten -- */
+/* Aufnehmen: die Uhr streamt ihr Mikrofon (mic_stream_to_phone_start) hierher; C.REC_END sagt, ob gesendet oder verworfen wird */
+var rec = null;              // { r: Recorder, stopped, send: Chat-ID, timer }
+Pebble.addEventListener('audiostreamstart', function (e) {
+  var sec = (me && me.server && me.server.audioSec) || 30;
+  rec = { r: new AUDIO.Recorder(e && e.sampleRate || 16000, sec), stopped: false, send: '', timer: null };
+});
+Pebble.addEventListener('audiostream', function (e) { if (rec && !rec.stopped && e && e.data) rec.r.push(e.data); });
+Pebble.addEventListener('audiostreamstop', function () { if (!rec) return; rec.stopped = true; if (rec.send) finishRec(); });
+function recEnd(cid, send) {
+  if (!rec) { if (send) toWatch({ CMD: C.SENT, FLAGS: 0, TEXT: 'No audio received' }); return; }
+  if (!send) { rec = null; return; }
+  rec.send = cid;
+  if (rec.stopped) finishRec();
+  else rec.timer = setTimeout(finishRec, 1500);   // letzte Blöcke abwarten, falls 'audiostreamstop' ausbleibt
+}
+function finishRec() {
+  var r = rec; rec = null;
+  if (!r) return;
+  clearTimeout(r.timer);
+  var cid = r.send, fail = function (msg) { toWatch({ CMD: C.SENT, FLAGS: 0, TEXT: trunc(msg, 60) }); };
+  if (r.r.seconds() < 0.5) return fail('Voice message too short');
+  if (!me || !E2E.ready()) return fail('Not set up');
+  var k = recipients(cid);
+  if (k.total && k.missing.length === k.total) return fail(k.missing.join(', ') + ' must open WatchieTalkie2 first');
+  var out;
+  try {
+    var bytes = r.r.finish();
+    out = E2E.encryptAudio('\uD83C\uDFA4 Voice message ' + AUDIO.fmt(r.r.seconds() * 10) + ' (update WatchieTalkie2 on a Pebble with speaker to play it)', bytes, k.keys);
+  } catch (x) { return fail('Encryption failed'); }
+  api('POST', '/v1/chats/' + cid + '/audio', out, function (err) {
+    toWatch(err ? { CMD: C.SENT, FLAGS: 0, TEXT: trunc(errText(err), 60) } : { CMD: C.SENT, FLAGS: 1 });
+  });
+}
+/* Abspielen: Audiodaten holen, entschlüsseln und stückweise an die Uhr geben. Die Uhr fordert Bereiche an (C.AUD_MORE von–bis),
+   sobald in ihrem Puffer Platz ist – so läuft nichts über und es geht nichts verloren. */
+var CHUNK = 1500;
+var play = null;             // { mid, bytes (ADPCM ohne Versionsbyte) }
+function audErr(mid, msg) { toWatch({ CMD: C.AUD_DATA, MID: mid, IDX: 0, COUNT: 0, TEXT: trunc(msg, 60) }); }
+function sendAudio(mid, from, to) {
+  if (!play || play.mid !== mid) return;
+  to = Math.min(to, play.bytes.length);
+  for (var o = from; o < to; o += CHUNK) {
+    toWatch({ CMD: C.AUD_DATA, MID: mid, IDX: o, COUNT: play.bytes.length, AUD: Array.prototype.slice.call(play.bytes.subarray(o, Math.min(o + CHUNK, to))) });
+  }
+}
+/* Noch nicht gesendete Audiostücke verwerfen (das gerade laufende bleibt, pump() nimmt es nach der Antwort heraus) */
+function dropAudio() { queue = queue.filter(function (d, i) { return (sending && i === 0) || d.CMD !== C.AUD_DATA; }); }
+function startPlay(mid, first) {
+  dropAudio();
+  if (!mid) return;                                  // Uhr hat das Abspielen beendet
+  if (play && play.mid === mid) return sendAudio(mid, 0, first);
+  var m = audioMsgs[mid];
+  if (!m) return audErr(mid, 'Voice message not found');
+  api('GET', '/v1/chats/' + m.chat + '/audio/' + mid, null, function (err, r) {
+    if (err) return audErr(mid, errText(err));
+    var pk = m.f === (me && me.name) ? E2E.publicKey() : keys[m.f];
+    var b = pk ? E2E.decryptAudio(m.e, pk, r.audio) : null;
+    if (!b || b[0] !== 1 || b.length < 2) return audErr(mid, '[unreadable]');
+    play = { mid: mid, bytes: b.subarray(1) };
+    sendAudio(mid, 0, first);
   });
 }
 
@@ -341,8 +442,7 @@ function poll() {
     if (r.seq >= seq) {
       fresh = (r.msgs || []).filter(function (msg) { return msg.id > seq; });
       fresh.forEach(function (msg) {
-        toWatch({ CMD: C.NEW_MSG, CHAT: msg.chat, FROM: msg.f, TEXT: msgText(readable(msg), platform() === 'aplite' ? 200 : 400),
-          FLAGS: msg.v ? 2 : 0, TS: msgTs(msg) });
+        toWatch(Object.assign({ CMD: C.NEW_MSG, CHAT: msg.chat, FROM: msg.f }, watchMsg(msg, msg.chat, platform() === 'aplite' ? 200 : 400)));
         if (msg.chat === openChat) api('POST', '/v1/chats/' + msg.chat + '/read', { upTo: msg.id }, function () {});
       });
       seq = Math.max(seq, r.seq);
@@ -394,6 +494,9 @@ Pebble.addEventListener('appmessage', function (e) {
   else if (cmd === C.BEEP) setBeep(p.TEXT === '1');
   else if (cmd === C.DELETE) deleteLast(cid);
   else if (cmd === C.PAUSE) setPause(p.TEXT === '1');
+  else if (cmd === C.REC_END) recEnd(cid, p.TEXT === '1');
+  else if (cmd === C.PLAY) startPlay(p.MID || 0, p.COUNT || 4000);
+  else if (cmd === C.AUD_MORE) sendAudio(p.MID, p.IDX, p.COUNT);
 });
 
 Pebble.addEventListener('showConfiguration', function () {

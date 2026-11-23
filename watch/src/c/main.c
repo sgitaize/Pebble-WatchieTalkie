@@ -5,14 +5,15 @@
 #include <pebble.h>
 
 /* Befehle pkjs → Uhr */
-enum { C_LIST_ITEM = 2, C_MSG_ITEM = 5, C_NEW_MSG = 7, C_QR_ITEM = 8, C_STATUS = 9, C_SENT = 10, C_PUSH = 11, C_LOOK = 12 };
+enum { C_LIST_ITEM = 2, C_MSG_ITEM = 5, C_NEW_MSG = 7, C_QR_ITEM = 8, C_STATUS = 9, C_SENT = 10, C_PUSH = 11, C_LOOK = 12, C_AUD_DATA = 13 };
 /* Befehle Uhr → pkjs */
-enum { C_READY = 20, C_OPEN = 21, C_SEND = 22, C_CLOSE = 23, C_ACCEPT = 24, C_DECLINE = 25, C_SEND_VOICE = 26, C_TEST = 27, C_BEEP = 28, C_DELETE = 29, C_PAUSE = 30 };
+enum { C_READY = 20, C_OPEN = 21, C_SEND = 22, C_CLOSE = 23, C_ACCEPT = 24, C_DECLINE = 25, C_SEND_VOICE = 26, C_TEST = 27, C_BEEP = 28, C_DELETE = 29, C_PAUSE = 30,
+  C_REC_END = 31, C_PLAY = 32, C_AUD_MORE = 33 };
 /* Art eines Listeneintrags */
 enum { K_CHAT = 0, K_CONTACT_INVITE = 1, K_GROUP_INVITE = 2 };
 /* Auswahlmenü – mode 0: „Emoji …“, „Letzte Nachricht löschen“, „Push pausieren“, darunter Schnellantworten · 1: Einladung annehmen/ablehnen
-   2: Emoji wählen · 3: Löschen bestätigen · 4: Liste (Push pausieren, Piep an/aus) */
-enum { P_REPLY = 0, P_INVITE = 1, P_EMOJI = 2, P_DELETE = 3, P_LIST = 4 };
+   2: Emoji wählen · 3: Löschen bestätigen · 4: Liste (Push pausieren, Piep an/aus) · 5: Sprachnachrichten im Chat */
+enum { P_REPLY = 0, P_INVITE = 1, P_EMOJI = 2, P_DELETE = 3, P_LIST = 4, P_VOICE = 5 };
 
 #if defined(PBL_PLATFORM_APLITE)
 #define MAX_MSGS 10
@@ -78,19 +79,40 @@ static GColor soft(void) {
 #define SYS_EMOJI_ON 0
 #define T_EMOJI_TXT "Emoji …"
 #endif
-typedef struct { char id[20]; char title[26]; char preview[44]; uint8_t unread; uint8_t kind; } Chat;
-typedef struct { char *text; char from[17]; bool mine, voice, big; int16_t h; uint8_t emo[3], emo_n; time_t ts; } Msg;   /* emo/big: reine Emoji-Nachricht (Bilder bzw. große Schrift), voice: diktiert */
+/* Sprachnachrichten (Audio): aufnehmen per Mikrofon-Stream ans Handy (mic_stream_to_phone_start, aktuelle PebbleOS),
+   abspielen über den Lautsprecher (PBL_SPEAKER) – beides nur Time 2 und Pebble 2 Duo. Angeboten nur, wenn auch das Gegenüber
+   beides hat (pkjs voiceOk). Alle anderen Uhren sehen eine Sprachnachricht als Hinweistext und diktieren weiter wie bisher. */
+#if defined(SYS_EMOJI) && defined(PBL_MICROPHONE) && defined(PBL_SPEAKER)
+#define VOICE_REC 1
+#endif
+#if defined(PBL_SPEAKER)
+#define VOICE_PLAY 1
+#endif
+#if defined(VOICE_REC)
+#define VOICE_REC_ON 1
+#else
+#define VOICE_REC_ON 0
+#endif
+typedef struct { char id[20]; char title[26]; char preview[44]; uint8_t unread; uint8_t kind, flags; } Chat;   /* flags 1: Sprachnachricht möglich */
+typedef struct { char *text; char from[17]; bool mine, voice, big; int16_t h; uint8_t emo[3], emo_n; time_t ts; uint32_t mid; uint16_t dur; } Msg;
+/* emo/big: reine Emoji-Nachricht (Bilder bzw. große Schrift), voice: diktiert, mid/dur: Sprachnachricht (Nummer, Dauer in Zehntelsekunden) */
 
 static Chat s_chats[MAX_CHATS];
 static int s_chat_count;
 /* Texte (nur Englisch) */
 enum { T_LOADING, T_EMPTY_CHAT, T_EMOJI, T_ACCEPT, T_DECLINE, T_CONTACT_REQ, T_GROUP_INV, T_NO_VOICE, T_NEW_FROM, T_SEND_FAILED,
-  T_DELETE_LAST, T_DELETE_YES, T_CANCEL, T_PAUSE, T_RESUME, T_BEEP_ON, T_BEEP_OFF, T_CONNECTING, T_NO_PHONE, T_NO_ANSWER, T_PHONE_LOST, T_CONF_HEAD, T_CONF_HINT, T_DICTATED };
+  T_DELETE_LAST, T_DELETE_YES, T_CANCEL, T_PAUSE, T_RESUME, T_BEEP_ON, T_BEEP_OFF, T_CONNECTING, T_NO_PHONE, T_NO_ANSWER, T_PHONE_LOST, T_CONF_HEAD, T_CONF_HINT, T_DICTATED,
+  T_REC, T_PLAY_LAST, T_VOICES, T_REC_HEAD, T_REC_WAIT, T_REC_HINT, T_REC_FULL, T_PLAY_WAIT, T_PLAY_HINT, T_PLAY_DONE, T_MIC_BUSY, T_MIC_FAIL,
+  T_MIC_PHONE, T_MUTED, T_YOU, T_PLAY_FAIL };
 static const char *T_EN[] = { "Loading …", "No messages yet.\nSELECT: speak\nhold SELECT: emoji, quick reply", T_EMOJI_TXT,
   "Accept", "Decline", "Contact request", "Group invitation", "Voice not available", "New from %s", "Sending failed",
   "Delete my last message", "Yes, delete it", "Cancel", "Pause push", "Resume push", "Beep on", "Beep off",
   "Connecting to phone …", "Phone not connected.\nOpen the Pebble app on your phone – loading continues automatically.",
-  "No answer from phone.\nRetrying …", "Phone disconnected", "Send this?", "SELECT: send\nBACK: discard", "dictated" };
+  "No answer from phone.\nRetrying …", "Phone disconnected", "Send this?", "SELECT: send\nBACK: discard", "dictated",
+  "\xF0\x9F\x8E\xA4  Voice message", "\xF0\x9F\x94\x8A  Play latest", "Voice messages …", "Recording", "Starting microphone …",
+  "SELECT: send\nBACK: cancel", "Time is up.\nSELECT: send\nBACK: cancel", "Loading …", "SELECT: from the start\nBACK: stop",
+  "SELECT: play again\nBACK: close", "Microphone is busy", "Microphone not available", "Phone stopped the microphone",
+  "Speaker is muted\n(Settings → Sounds)", "You", "Playback failed" };
 #define TR(i) (T_EN[i])
 static char s_status[160] = "…";
 
@@ -98,6 +120,7 @@ static Msg s_msgs[MAX_MSGS];
 static int s_msg_count;
 static char s_open_chat[20];
 static char s_open_title[26];
+static bool s_open_voice;    /* Sprachnachricht in diesen Chat möglich (Gegenüber hat Lautsprecher) */
 static bool s_chat_loading;
 static bool s_chat_failed;   /* Laden fehlgeschlagen: statt „Loading …“ steht s_status im Chat */
 
@@ -141,7 +164,7 @@ static DictationSession *s_dict;
 #endif
 
 /* ------------------------------------------------------------ Senden -- */
-typedef struct { uint8_t cmd; char chat[20]; char text[TEXT_BYTES]; } Out;
+typedef struct { uint8_t cmd; char chat[20]; char text[TEXT_BYTES]; int32_t mid, idx, count; } Out;   /* mid ≠ 0: Zahlen mitsenden (Sprachnachrichten) */
 static Out s_out[4];
 static int s_out_len;
 static AppTimer *s_out_timer;
@@ -160,17 +183,28 @@ static void out_pump(void *ctx) {
   dict_write_uint8(it, MESSAGE_KEY_CMD, o->cmd);
   if (o->chat[0]) dict_write_cstring(it, MESSAGE_KEY_CHAT, o->chat);
   if (o->text[0]) dict_write_cstring(it, MESSAGE_KEY_TEXT, o->text);
+  if (o->cmd == C_PLAY || o->cmd == C_AUD_MORE) {
+    dict_write_int32(it, MESSAGE_KEY_MID, o->mid); dict_write_int32(it, MESSAGE_KEY_IDX, o->idx); dict_write_int32(it, MESSAGE_KEY_COUNT, o->count);
+  }
   if (app_message_outbox_send() == APP_MSG_OK) s_out_busy = true;
   else out_schedule(250);
 }
-static void send_cmd(uint8_t cmd, const char *chat, const char *text) {
+static Out *send_cmd(uint8_t cmd, const char *chat, const char *text) {
   if (s_out_len == (int)ARRAY_LENGTH(s_out)) { memmove(&s_out[0], &s_out[1], sizeof(Out) * (s_out_len - 1)); s_out_len--; }
   Out *o = &s_out[s_out_len++];
   o->cmd = cmd;
+  o->mid = o->idx = o->count = 0;
   strncpy(o->chat, chat ? chat : "", sizeof(o->chat) - 1); o->chat[sizeof(o->chat) - 1] = 0;
   strncpy(o->text, text ? text : "", sizeof(o->text) - 1); o->text[sizeof(o->text) - 1] = 0;
   out_schedule(10);
+  return o;
 }
+#if defined(PBL_SPEAKER)
+static void send_nums(uint8_t cmd, int32_t mid, int32_t idx, int32_t count) {
+  Out *o = send_cmd(cmd, NULL, NULL);
+  o->mid = mid; o->idx = idx; o->count = count;
+}
+#endif
 static void out_sent(DictionaryIterator *it, void *ctx) {
   s_out_busy = false;
   if (s_out_len) { memmove(&s_out[0], &s_out[1], sizeof(Out) * (s_out_len - 1)); s_out_len--; }
@@ -377,6 +411,7 @@ static void msg_set(Msg *m, const char *from, const char *text, bool mine, time_
   m->mine = mine;
   m->ts = ts;
   m->voice = voice;
+  m->mid = 0; m->dur = 0;
   measure(m);
 }
 static void msg_append(const char *from, const char *text, bool mine, time_t ts, bool voice) {
@@ -464,6 +499,286 @@ static void dict_done(DictationSession *session, DictationSessionStatus status, 
   }
 }
 #endif
+/* ---------------------------------------------------- Sprachnachrichten -- */
+/* Ein Fenster für beides: Aufnahme (V_REC) und Wiedergabe (V_PLAY). Gezeichnet wird im freien Bereich über dem
+   „Listening“-Hinweis des Systems (unobstructed area), die Aufnahmezeit steht rechts neben dem Hinweis, wo Platz ist. */
+#if defined(VOICE_REC) || defined(VOICE_PLAY)
+enum { V_REC, V_PLAY };
+enum { VS_WAIT, VS_ON, VS_DONE, VS_ERR };   /* wartet (Mikrofon/Laden) · läuft · fertig · Fehler */
+static Window *s_voice_win;
+static Layer *s_voice_layer;
+static AppTimer *s_voice_timer;
+static int s_vmode, s_vstate;
+static char s_vtitle[26];
+static const char *s_verr;
+static uint32_t s_vms, s_vtotal;            /* bisher / gesamt in ms */
+static void fmt_time(char *buf, size_t n, uint32_t ms) { uint32_t sec = (ms + 500) / 1000; snprintf(buf, n, "%d:%02d", (int)(sec / 60), (int)(sec % 60)); }
+static void voice_update(Layer *layer, GContext *ctx) {
+  GRect b = layer_get_unobstructed_bounds(layer);
+  int x0 = PAD + ROUND_INSET, w = b.size.w - 2 * x0, y = b.origin.y + PBL_IF_ROUND_ELSE(24, 6);
+  graphics_context_set_text_color(ctx, FG);
+  graphics_draw_text(ctx, s_vtitle, s_font_name, GRect(x0, y, w, s_name_h + 6), GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+  y += s_name_h + 8;
+  char t[32], a[12], c[12];
+  fmt_time(a, sizeof(a), s_vms); fmt_time(c, sizeof(c), s_vtotal);
+  snprintf(t, sizeof(t), "%s / %s", a, c);
+  const char *hint;
+  if (s_vstate == VS_ERR) hint = s_verr;
+  else if (s_vmode == V_REC) hint = TR(s_vstate == VS_WAIT ? T_REC_WAIT : s_vstate == VS_DONE ? T_REC_FULL : T_REC_HINT);
+  else hint = TR(s_vstate == VS_WAIT ? T_PLAY_WAIT : s_vstate == VS_DONE ? T_PLAY_DONE : T_PLAY_HINT);
+  if (s_vstate != VS_ERR) {
+    /* Aufnahme: roter Punkt + Zeit, Wiedergabe: Zeit; darunter Fortschrittsbalken */
+    GRect acc;
+    bool beside = s_vmode == V_REC && layer_get_mic_accessory_bounds(layer, &acc) && acc.size.w > 60;
+    if (beside) graphics_draw_text(ctx, t, s_font_name, GRect(acc.origin.x, acc.origin.y + (acc.size.h - s_name_h) / 2 - 4, acc.size.w - 4, s_name_h + 4),
+                                   GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
+    else graphics_draw_text(ctx, t, s_font_body, GRect(x0, y, w, 34), GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+    if (s_vmode == V_REC && s_vstate == VS_ON) {
+      graphics_context_set_fill_color(ctx, PBL_IF_COLOR_ELSE(GColorRed, FG));
+      graphics_fill_circle(ctx, GPoint(x0 + PBL_IF_ROUND_ELSE(26, 10), y + 16), 6);
+    }
+    y += 36;
+    int bw = w - PBL_IF_ROUND_ELSE(30, 8), bx = x0 + (w - bw) / 2;
+    graphics_context_set_stroke_color(ctx, FG);
+    graphics_draw_round_rect(ctx, GRect(bx, y, bw, 8), 3);
+    int fill = s_vtotal ? (int)((bw - 4) * (s_vms > s_vtotal ? s_vtotal : s_vms) / s_vtotal) : 0;
+    graphics_context_set_fill_color(ctx, PBL_IF_COLOR_ELSE(ACCENT, FG));
+    if (fill > 0) graphics_fill_rect(ctx, GRect(bx + 2, y + 2, fill, 4), 1, GCornersAll);
+    y += 16;
+  }
+  graphics_draw_text(ctx, hint, s_font_body, GRect(x0, y, w, b.origin.y + b.size.h - y), GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+}
+static void voice_dirty(void) { if (s_voice_layer) layer_mark_dirty(s_voice_layer); }
+static void voice_area(AnimationProgress p, void *ctx) { voice_dirty(); }
+static void voice_dirty_cb(void *ctx) { voice_dirty(); }
+static void voice_close(void) { if (s_voice_win) window_stack_remove(s_voice_win, true); }
+
+#if defined(VOICE_REC)
+/* ---- Aufnahme: das Handy (pkjs) bekommt den Ton, kodiert, verschlüsselt und sendet ihn auf C_REC_END "1" */
+#define REC_MAX_MS 30000
+static bool s_rec_used;                     /* Stream wurde gestartet → C_REC_END schicken */
+/* Dauer per Takt zählen, nicht über die Uhrzeit – die kann sich während der Aufnahme ändern (Zeitabgleich mit dem Handy) */
+#define REC_TICK 250
+static void rec_tick(void *ctx) {
+  s_voice_timer = NULL;
+  if (s_vstate != VS_ON) return;
+  if (ctx) s_vms += REC_TICK;
+  if (s_vms >= REC_MAX_MS) {
+    s_vms = REC_MAX_MS;
+    mic_stream_to_phone_stop();
+    s_vstate = VS_DONE;
+    vibes_short_pulse();
+  } else s_voice_timer = app_timer_register(REC_TICK, rec_tick, (void *)1);
+  voice_dirty();
+}
+static void rec_started(void *ctx) {
+  s_vstate = VS_ON;
+  s_vms = 0;
+  rec_tick(NULL);
+}
+/* Stream von außen beendet (Benachrichtigung, Diktat, Handy): Bisheriges darf noch gesendet werden */
+static void rec_stopped(MicStreamStopReason reason, void *ctx) {
+  if (s_vstate == VS_ON && s_vms >= 1000) s_vstate = VS_DONE;
+  else if (s_vstate != VS_DONE) { s_vstate = VS_ERR; s_verr = TR(reason == MicStreamStopReasonPhone ? T_MIC_PHONE : T_MIC_FAIL); }
+  voice_dirty();
+}
+static void rec_start(void) {
+  s_vstate = VS_WAIT; s_vms = 0; s_vtotal = REC_MAX_MS;
+  MicStreamStartResult r = mic_stream_to_phone_start((MicStreamHandlers) { .started = rec_started, .stopped = rec_stopped }, NULL);
+  s_rec_used = r == MicStreamStartOk;
+  if (!s_rec_used) { s_vstate = VS_ERR; s_verr = TR(r == MicStreamStartErrBusy ? T_MIC_BUSY : T_MIC_FAIL); }
+  voice_dirty();
+}
+static void rec_finish(bool send) {
+  if (mic_stream_to_phone_is_active()) mic_stream_to_phone_stop();
+  if (s_rec_used) send_cmd(C_REC_END, s_open_chat, send ? "1" : "0");
+  s_rec_used = false;
+  if (send && s_open_chat[0]) {
+    char t[48], d[12];
+    fmt_time(d, sizeof(d), s_vms);
+    snprintf(t, sizeof(t), "%s %s", TR(T_REC), d);
+    msg_append("", t, true, time(NULL), false);
+    chat_relayout(true);
+  }
+}
+#endif
+
+#if defined(VOICE_PLAY)
+/* ---- Wiedergabe: pkjs schickt IMA-ADPCM (8 kHz, 4 Bit) stückweise in einen Ringpuffer; die Uhr fordert jeweils an,
+   wofür Platz ist (C_AUD_MORE von–bis), dekodiert zu 16 Bit und füttert den Lautsprecher-Stream. */
+#define RING 8192                            /* ≈ 2 s */
+#define PREBUF 4000                          /* 1 s vorladen, dann loslegen */
+static const int16_t ADPCM_STEP[89] = { 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97,
+  107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282,
+  1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487,
+  12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767 };
+static const int8_t ADPCM_IDX[8] = { -1, -1, -1, -1, 2, 4, 6, 8 };
+static uint8_t *s_ring;
+static uint32_t s_pmid, s_ptotal, s_prx, s_pdec, s_preq, s_pgap;   /* Nachricht, Bytes gesamt/empfangen/dekodiert/angefordert */
+static int32_t s_ppred;
+static int s_pidx;
+static bool s_pspk;                          /* Lautsprecher-Stream offen */
+static int16_t s_pcm[512];
+static uint16_t s_pcm_n, s_pcm_o;
+static int16_t adpcm(int code) {
+  int step = ADPCM_STEP[s_pidx], dq = step >> 3;
+  if (code & 4) dq += step;
+  if (code & 2) dq += step >> 1;
+  if (code & 1) dq += step >> 2;
+  s_ppred += code & 8 ? -dq : dq;
+  if (s_ppred > 32767) s_ppred = 32767; else if (s_ppred < -32768) s_ppred = -32768;
+  s_pidx += ADPCM_IDX[code & 7];
+  if (s_pidx < 0) s_pidx = 0; else if (s_pidx > 88) s_pidx = 88;
+  return (int16_t)s_ppred;
+}
+static void play_halt(void) {
+  if (s_voice_timer) { app_timer_cancel(s_voice_timer); s_voice_timer = NULL; }
+  if (s_pspk) { speaker_set_finish_callback(NULL, NULL); speaker_stop(); s_pspk = false; }
+}
+static void play_finished(SpeakerFinishReason reason, void *ctx) {
+  s_pspk = false;
+  if (s_vstate != VS_ON) return;
+  if (reason == SpeakerFinishReasonDone || s_pdec >= s_ptotal) { s_vstate = VS_DONE; s_vms = s_vtotal; }
+  else { s_vstate = VS_ERR; s_verr = TR(T_PLAY_FAIL); }
+  voice_dirty();
+}
+static void play_pump(void *ctx) {
+  s_voice_timer = NULL;
+  if (!s_pspk) return;
+  for (int k = 0; k < 8; k++) {
+    if (s_pcm_o == s_pcm_n) {                 /* nächstes Stück dekodieren */
+      uint32_t n = s_prx - s_pdec;
+      if (n > ARRAY_LENGTH(s_pcm) / 2) n = ARRAY_LENGTH(s_pcm) / 2;
+      if (!n) break;
+      for (uint32_t i = 0; i < n; i++) { uint8_t b = s_ring[(s_pdec + i) % RING]; s_pcm[2 * i] = adpcm(b & 15); s_pcm[2 * i + 1] = adpcm(b >> 4); }
+      s_pdec += n; s_pcm_n = n * 2; s_pcm_o = 0;
+    }
+    uint32_t w = speaker_stream_write(&s_pcm[s_pcm_o], (s_pcm_n - s_pcm_o) * 2);
+    s_pcm_o += w / 2;
+    if (s_pcm_o < s_pcm_n) break;             /* Lautsprecher-Puffer voll */
+  }
+  if (s_preq < s_ptotal && s_pdec + RING - s_preq >= RING / 2) {   /* Platz frei → nachfordern */
+    uint32_t to = s_pdec + RING < s_ptotal ? s_pdec + RING : s_ptotal;
+    send_nums(C_AUD_MORE, s_pmid, s_preq, to);
+    s_preq = to;
+  }
+  s_vms = s_pdec / 4;                         /* 4 Byte je ms */
+  voice_dirty();
+  if (s_pdec >= s_ptotal && s_pcm_o == s_pcm_n) { speaker_stream_close(); return; }   /* Rest spielt aus, dann play_finished */
+  s_voice_timer = app_timer_register(30, play_pump, NULL);
+}
+static void play_start(void) {
+  play_halt();
+  s_prx = s_pdec = s_ptotal = s_pgap = 0; s_preq = RING; s_ppred = 0; s_pidx = 0; s_pcm_n = s_pcm_o = 0; s_vms = 0;
+  if (!s_ring) s_ring = malloc(RING);
+  if (!s_ring) { s_vstate = VS_ERR; s_verr = TR(T_PLAY_FAIL); voice_dirty(); return; }
+  if (speaker_is_muted()) { s_vstate = VS_ERR; s_verr = TR(T_MUTED); voice_dirty(); return; }
+  s_vstate = VS_WAIT;
+  send_nums(C_PLAY, s_pmid, 0, RING);
+  voice_dirty();
+}
+/* Stück vom Handy: IDX = Versatz, COUNT = Gesamtgröße (0 = Fehler, TEXT = Meldung) */
+static void play_data(DictionaryIterator *it, uint32_t mid, uint32_t off, uint32_t total) {
+  if (!s_voice_win || s_vmode != V_PLAY || mid != s_pmid || s_vstate == VS_ERR || s_vstate == VS_DONE) return;
+  Tuple *t = dict_find(it, MESSAGE_KEY_AUD);
+  if (!total) {
+    static char err[64];
+    t = dict_find(it, MESSAGE_KEY_TEXT);
+    snprintf(err, sizeof(err), "%s", t ? t->value->cstring : TR(T_PLAY_FAIL));
+    s_vstate = VS_ERR; s_verr = err; play_halt(); voice_dirty();
+    return;
+  }
+  s_ptotal = total;
+  if (s_vtotal != total / 4) { s_vtotal = total / 4; voice_dirty(); }
+  if (!t || off < s_prx) return;              /* doppelt */
+  if (off > s_prx) {                          /* Stück verloren → einmal ab der Lücke neu anfordern */
+    if (s_pgap != s_prx + 1) { s_pgap = s_prx + 1; send_nums(C_AUD_MORE, s_pmid, s_prx, s_preq); }
+    return;
+  }
+  uint32_t n = t->length;
+  if (s_prx + n - s_pdec > RING) return;
+  const uint8_t *src = (const uint8_t *)t->value;
+  for (uint32_t i = 0; i < n; i++) s_ring[(s_prx + i) % RING] = src[i];
+  s_prx += n;
+  if (!s_pspk && (s_prx - s_pdec >= PREBUF || s_prx >= s_ptotal)) {
+    if (!speaker_stream_open(SpeakerPcmFormat_8kHz_16bit, 100)) { s_vstate = VS_ERR; s_verr = TR(T_PLAY_FAIL); voice_dirty(); return; }
+    speaker_set_finish_callback(play_finished, NULL);
+    s_pspk = true;
+    s_vstate = VS_ON;
+    play_pump(NULL);
+  }
+}
+#endif
+
+static void voice_select(ClickRecognizerRef r, void *ctx) {
+#if defined(VOICE_REC)
+  if (s_vmode == V_REC) {
+    if ((s_vstate == VS_ON && s_vms >= 700) || s_vstate == VS_DONE) { rec_finish(true); voice_close(); }
+    return;
+  }
+#endif
+#if defined(VOICE_PLAY)
+  play_start();
+#endif
+}
+static void voice_back(ClickRecognizerRef r, void *ctx) { voice_close(); }
+static void voice_clicks(void *ctx) {
+  window_single_click_subscribe(BUTTON_ID_SELECT, voice_select);
+  window_single_click_subscribe(BUTTON_ID_BACK, voice_back);
+}
+static void voice_load(Window *w) {
+  Layer *root = window_get_root_layer(w);
+  window_set_background_color(w, BG);
+  s_voice_layer = layer_create(layer_get_bounds(root));
+  layer_set_update_proc(s_voice_layer, voice_update);
+  layer_add_child(root, s_voice_layer);
+  unobstructed_area_service_subscribe((UnobstructedAreaHandlers) { .change = voice_area, .did_change = voice_dirty_cb }, NULL);
+}
+static void voice_appear(Window *w) {
+#if defined(VOICE_REC)
+  if (s_vmode == V_REC && !s_rec_used && s_vstate == VS_WAIT) rec_start();
+#endif
+#if defined(VOICE_PLAY)
+  if (s_vmode == V_PLAY && s_vstate == VS_WAIT && !s_prx) play_start();
+#endif
+}
+static void voice_unload(Window *w) {
+#if defined(VOICE_REC)
+  if (s_vmode == V_REC) rec_finish(false);    /* nicht gesendet → verwerfen */
+#endif
+#if defined(VOICE_PLAY)
+  if (s_vmode == V_PLAY) { play_halt(); send_nums(C_PLAY, 0, 0, 0); free(s_ring); s_ring = NULL; }
+#endif
+  if (s_voice_timer) { app_timer_cancel(s_voice_timer); s_voice_timer = NULL; }
+  unobstructed_area_service_unsubscribe();
+  layer_destroy(s_voice_layer); s_voice_layer = NULL;
+  window_destroy(w); s_voice_win = NULL;
+}
+static void voice_open(int mode, const char *title);
+#if defined(VOICE_REC)
+static void rec_open(void) { voice_open(V_REC, s_open_title); }
+#endif
+static void voice_open(int mode, const char *title) {
+  if (s_voice_win) return;
+  s_vmode = mode; s_vstate = VS_WAIT; s_vms = s_vtotal = 0;
+  snprintf(s_vtitle, sizeof(s_vtitle), "%s", title);
+  s_voice_win = window_create();
+  window_set_click_config_provider(s_voice_win, voice_clicks);
+  window_set_window_handlers(s_voice_win, (WindowHandlers) { .load = voice_load, .appear = voice_appear, .unload = voice_unload });
+  window_stack_push(s_voice_win, true);
+}
+#endif
+#if defined(VOICE_PLAY)
+/* Sprachnachrichten im offenen Chat, neueste zuerst */
+static int voice_count(void) { int n = 0; for (int i = 0; i < s_msg_count; i++) if (s_msgs[i].mid) n++; return n; }
+static Msg *voice_nth(int k) { for (int i = s_msg_count - 1; i >= 0; i--) if (s_msgs[i].mid && !k--) return &s_msgs[i]; return NULL; }
+static void play_open(Msg *m) {
+  if (!m) return;
+  s_pmid = m->mid; s_prx = 0;
+  voice_open(V_PLAY, m->mine ? TR(T_YOU) : m->from);
+  s_vtotal = m->dur * 100;
+}
+#endif
 static void chat_select(ClickRecognizerRef r, void *ctx) { start_talk(); }
 static void chat_long_select(ClickRecognizerRef r, void *ctx) { pick_open(P_REPLY, false); }
 static void chat_click_config(void *ctx) {
@@ -514,6 +829,7 @@ static void chat_open(Chat *c) {
   msgs_clear();
   strncpy(s_open_chat, c->id, sizeof(s_open_chat));
   strncpy(s_open_title, c->title, sizeof(s_open_title));
+  s_open_voice = c->flags & 1;
   s_chat_loading = true;
   s_chat_failed = false;
   watchdog_arm();
@@ -555,20 +871,34 @@ static Chat s_pick_chat;
 #endif
 /* Menü im Chat (P_REPLY): oben Emoji, Letzte löschen, Push pausieren – darunter die Schnellantworten.
    Listenmenü (P_LIST): Push pausieren, Piep an/aus. System-Chat: nur lesbar, kein Emoji/Löschen. */
-enum { R_EMOJI, R_DELETE, R_PAUSE, R_BEEP, R_QR };
+enum { R_REC, R_PLAY, R_VOICES, R_EMOJI, R_DELETE, R_PAUSE, R_BEEP, R_QR };
 static bool sys_chat(void) { return !strcmp(s_open_chat, "u.watchietalkie"); }
+/* Ganz oben im Chat-Menü: Sprachnachricht aufnehmen, neueste abspielen, alle Sprachnachrichten (je nach Uhr und Chat) */
+static bool rec_ok(void) { return PBL_IF_MICROPHONE_ELSE(s_open_voice && !sys_chat(), false) && VOICE_REC_ON; }
+static int play_n(void) {
+#if defined(VOICE_PLAY)
+  return voice_count();
+#else
+  return 0;
+#endif
+}
 static int pick_opts(void) {
   if (s_pick_mode == P_LIST) return (s_push_avail ? 1 : 0) + BEEP_ROWS;
-  return (sys_chat() ? 0 : 2) + (s_push_avail ? 1 : 0);
+  return (rec_ok() ? 1 : 0) + (play_n() > 0) + (play_n() > 1) + (sys_chat() ? 0 : 2) + (s_push_avail ? 1 : 0);
 }
 static int row_kind(int r) {
   if (s_pick_mode == P_LIST) return s_push_avail && r == 0 ? R_PAUSE : R_BEEP;
+  if (rec_ok()) { if (r == 0) return R_REC; r--; }
+  int pn = play_n();
+  if (pn > 0) { if (r == 0) return R_PLAY; r--; }
+  if (pn > 1) { if (r == 0) return R_VOICES; r--; }
   if (!sys_chat()) { if (r == 0) return R_EMOJI; if (r == 1) return R_DELETE; r -= 2; }
   return s_push_avail && r == 0 ? R_PAUSE : R_QR;
 }
 static uint16_t pick_rows(MenuLayer *m, uint16_t s, void *ctx) {
   if (s_pick_mode == P_INVITE || s_pick_mode == P_DELETE) return 2;
   if (s_pick_mode == P_EMOJI) return EMOJI_N;
+  if (s_pick_mode == P_VOICE) return play_n();
   return pick_opts() + (s_pick_mode == P_REPLY ? s_qr_count : 0);
 }
 #if !defined(SYS_EMOJI)
@@ -602,7 +932,22 @@ static void pick_draw(GContext *ctx, const Layer *cell, MenuIndex *idx, void *da
   }
   if (s_pick_mode == P_INVITE) { cell_draw(ctx, cell, TR(r == 0 ? T_ACCEPT : T_DECLINE), NULL); return; }
   if (s_pick_mode == P_DELETE) { cell_draw(ctx, cell, TR(r == 0 ? T_DELETE_YES : T_CANCEL), NULL); return; }
+#if defined(VOICE_PLAY)
+  if (s_pick_mode == P_VOICE || row_kind(r) == R_PLAY) {   /* „anna · 0:07“, darunter die Zeit */
+    Msg *m = voice_nth(s_pick_mode == P_VOICE ? r : 0);
+    if (!m) return;
+    char t[40], d[12], meta[40];
+    fmt_time(d, sizeof(d), m->dur * 100);
+    snprintf(t, sizeof(t), "%s · %s", m->mine ? TR(T_YOU) : m->from, d);
+    meta_text(m, meta, sizeof(meta));
+    if (s_pick_mode == P_VOICE) cell_draw(ctx, cell, t, meta);
+    else cell_draw(ctx, cell, TR(T_PLAY_LAST), t);
+    return;
+  }
+#endif
   switch (row_kind(r)) {
+    case R_REC: cell_draw(ctx, cell, TR(T_REC), NULL); break;
+    case R_VOICES: cell_draw(ctx, cell, TR(T_VOICES), NULL); break;
 #if defined(SYS_EMOJI)
     case R_EMOJI: cell_draw(ctx, cell, TR(T_EMOJI), NULL); break;
 #else
@@ -627,7 +972,9 @@ static int16_t pick_row_h(MenuLayer *m, MenuIndex *idx, void *ctx) {
   if (s_pick_mode == P_EMOJI) return s_look.font ? cell_h(false, true) : EMO + 10;
   if (reply && row_kind(idx->row) == R_EMOJI) return cell_h(false, true);
 #endif
-  return cell_h(reply && row_kind(idx->row) == R_PAUSE, focused);
+  if (s_pick_mode == P_VOICE) return cell_h(true, focused);
+  int rk = reply ? row_kind(idx->row) : -1;
+  return cell_h(rk == R_PAUSE || rk == R_PLAY, focused);
 }
 static void pick_select(MenuLayer *m, MenuIndex *idx, void *ctx);
 /* Schriftgröße 0: Standard-Zeilenhöhen des Systems (außer in der Emoji-Auswahl mit Bildern) */
@@ -657,7 +1004,20 @@ static void pick_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
     pick_send(EMOJI[r][0]);
   } else if (s_pick_mode == P_DELETE) {
     if (r == 0 && s_open_chat[0]) send_cmd(C_DELETE, s_open_chat, NULL);
+#if defined(VOICE_PLAY)
+  } else if (s_pick_mode == P_VOICE) {
+    window_stack_remove(s_pick_win, false);
+    play_open(voice_nth(r));
+    return;
+#endif
   } else switch (row_kind(r)) {
+#if defined(VOICE_REC)
+    case R_REC: window_stack_remove(s_pick_win, false); rec_open(); return;
+#endif
+#if defined(VOICE_PLAY)
+    case R_PLAY: window_stack_remove(s_pick_win, false); play_open(voice_nth(0)); return;
+    case R_VOICES: pick_mode(P_VOICE); return;
+#endif
     case R_EMOJI: pick_mode(P_EMOJI); return;
     case R_DELETE: pick_mode(P_DELETE); return;
     case R_PAUSE: {                               /* Push pausieren / fortsetzen – Server bestätigt per C_PUSH */
@@ -857,6 +1217,12 @@ static const char *str(DictionaryIterator *it, uint32_t key) { Tuple *t = dict_f
 static int num(DictionaryIterator *it, uint32_t key) { Tuple *t = dict_find(it, key); return t ? (int)t->value->int32 : 0; }
 static void copy(char *dst, size_t n, const char *src) { strncpy(dst, src, n - 1); dst[n - 1] = 0; }
 
+/* Sprachnachricht (FLAGS-Bit 4, nur auf Uhren mit Lautsprecher): Nummer und Dauer merken */
+static void msg_audio(Msg *m, DictionaryIterator *it) {
+  if (!(num(it, MESSAGE_KEY_FLAGS) & 4)) return;
+  m->mid = num(it, MESSAGE_KEY_MID);
+  m->dur = num(it, MESSAGE_KEY_DUR);
+}
 static void inbox(DictionaryIterator *it, void *ctx) {
   int cmd = num(it, MESSAGE_KEY_CMD), idx = num(it, MESSAGE_KEY_IDX), count = num(it, MESSAGE_KEY_COUNT);
   s_rx++;
@@ -873,6 +1239,7 @@ static void inbox(DictionaryIterator *it, void *ctx) {
         copy(c->preview, sizeof(c->preview), str(it, MESSAGE_KEY_TEXT));
         c->unread = num(it, MESSAGE_KEY_UNREAD);
         c->kind = num(it, MESSAGE_KEY_KIND);
+        c->flags = num(it, MESSAGE_KEY_FLAGS);
       }
       if (idx == count - 1 || idx == MAX_CHATS - 1) { s_chat_count = s_load_n; main_reload(); }
       break;
@@ -882,15 +1249,21 @@ static void inbox(DictionaryIterator *it, void *ctx) {
       if (idx == 0) msgs_clear();
       s_chat_loading = false;
       s_chat_failed = false;
-      if (count > 0 && idx == s_msg_count && idx < MAX_MSGS)
+      if (count > 0 && idx == s_msg_count && idx < MAX_MSGS) {
         msg_set(&s_msgs[s_msg_count++], str(it, MESSAGE_KEY_FROM), str(it, MESSAGE_KEY_TEXT), num(it, MESSAGE_KEY_FLAGS) & 1,
                 num(it, MESSAGE_KEY_TS), (num(it, MESSAGE_KEY_FLAGS) & 2) != 0);
+        msg_audio(&s_msgs[s_msg_count - 1], it);
+      }
       if (!s_chat_win) break;
       if (count == 0 || idx == count - 1 || idx == MAX_MSGS - 1) chat_relayout(true);
       break;
     case C_NEW_MSG: {
       bool here = s_chat_win && strcmp(str(it, MESSAGE_KEY_CHAT), s_open_chat) == 0;
-      if (here) { msg_append(str(it, MESSAGE_KEY_FROM), str(it, MESSAGE_KEY_TEXT), false, num(it, MESSAGE_KEY_TS), (num(it, MESSAGE_KEY_FLAGS) & 2) != 0); chat_relayout(true); }
+      if (here) {
+        msg_append(str(it, MESSAGE_KEY_FROM), str(it, MESSAGE_KEY_TEXT), false, num(it, MESSAGE_KEY_TS), (num(it, MESSAGE_KEY_FLAGS) & 2) != 0);
+        msg_audio(&s_msgs[s_msg_count - 1], it);
+        chat_relayout(true);
+      }
       if (s_vibe && !quiet_time_is_active()) vibes_short_pulse();   /* Ruhemodus: weder Vibration noch Piep */
       roger_beep();
       if (!here && s_chat_win) {
@@ -933,6 +1306,9 @@ static void inbox(DictionaryIterator *it, void *ctx) {
       persist_write_data(PERSIST_LOOK, &s_look, sizeof(s_look));
       break;
     }
+#if defined(VOICE_PLAY)
+    case C_AUD_DATA: play_data(it, num(it, MESSAGE_KEY_MID), idx, count); break;
+#endif
     case C_SENT:
       if (!(num(it, MESSAGE_KEY_FLAGS) & 1)) { vibes_double_pulse(); banner_show(str(it, MESSAGE_KEY_TEXT)[0] ? str(it, MESSAGE_KEY_TEXT) : TR(T_SEND_FAILED)); }
       break;
@@ -947,7 +1323,11 @@ static void init(void) {
   app_message_register_inbox_received(inbox);
   app_message_register_outbox_sent(out_sent);
   app_message_register_outbox_failed(out_failed);
+#if defined(VOICE_PLAY)
+  app_message_open(2048, 640);                /* Audiostücke à 1500 Byte (pkjs CHUNK) */
+#else
   app_message_open(PBL_IF_ROUND_ELSE(1024, PBL_IF_COLOR_ELSE(1024, 700)), 640);
+#endif
 #if defined(PBL_MICROPHONE)
   s_dict = dictation_session_create(TEXT_BYTES, dict_done, NULL);
   if (s_dict) dictation_session_enable_confirmation(s_dict, false);   /* eigene Bestätigung: conf_open */

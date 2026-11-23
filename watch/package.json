@@ -1,7 +1,7 @@
 {
   "name": "watchietalkie",
   "author": "Simon Gutjahr",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "keywords": [
     "pebble-app"
   ],
@@ -27,6 +27,12 @@
     "capabilities": [
       "configurable"
     ],
+    "usesPermissions": [
+      "Internet",
+      "LocalNetwork",
+      "Timeline",
+      "WatchMicrophone"
+    ],
     "messageKeys": [
       "CMD",
       "CHAT",
@@ -38,7 +44,10 @@
       "UNREAD",
       "KIND",
       "FLAGS",
-      "TS"
+      "TS",
+      "MID",
+      "AUD",
+      "DUR"
     ],
     "resources": {
       "media": [

@@ -18,6 +18,7 @@
  *   PUSHOVER_TOKEN    Pushover-Anwendungstoken des Servers (optional; sonst trägt jeder Nutzer sein eigenes ein)
  *   SERVER_NAME       Anzeigename des Servers (Standard "WatchieTalkie2")
  *   DONATE_URL        Spendenlink auf der Info-Seite (Standard: Projekt-Spendenlink, "off" = ausblenden)
+ *   VOICE             "off" = keine Sprachnachrichten (Audio) annehmen
  *   ADMIN_KEY         Schlüssel für die Betreiber-Seite /admin (alternativ SHA-256 davon in data/admin-key; ohne = keine Admin-Seite)
  */
 'use strict';
@@ -46,7 +47,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.11.0';
+const VERSION = '1.12.0';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -68,6 +69,10 @@ const GROUPS_PER_USER = 20;
 const CONTACTS_MAX = 200;
 const ALIASES_MAX = 3;                // Zweitnamen je Konto (Einladungen an einen Zweitnamen landen beim Hauptkonto)
 const BODY_MAX = 32768;
+/* Sprachnachrichten (Audio, Ende-zu-Ende-verschlüsselt): 8 kHz IMA-ADPCM = 4000 Byte/s, höchstens AUDIO_SEC Sekunden */
+const AUDIO_SEC = process.env.VOICE === 'off' ? 0 : 30;
+const AUDIO_B64_MAX = Math.ceil((AUDIO_SEC * 4000 + 64) / 3) * 4;
+const AUDIO_DIR = path.join(DATA, 'audio');
 const NAME_RE = /^[a-z0-9][a-z0-9_]{2,15}$/;
 const RESERVED = new Set(['admin', 'administrator', 'root', 'system', 'support', 'server', 'watchietalkie', 'watchietalkie2', 'psst', 'pebble', 'rebble',
   'null', 'undefined', 'constructor', 'prototype', 'hasownproperty', 'tostring', 'valueof']);
@@ -78,11 +83,12 @@ const DEFAULT_CFG = { qr: ['OK', 'On my way', 'Call me', 'Later', 'Yes', 'No', '
 /* Alle Nachschlage-Tabellen ohne Prototyp: Namen wie "constructor" oder "__proto__" können nichts manipulieren */
 const dict = (o) => Object.assign(Object.create(null), o || {});
 function loadDb() {
-  const d = { seq: 0, users: dict(), groups: dict(), chats: dict(), stats: { messages: 0, voice: 0, since: Date.now() } };
+  const d = { seq: 0, users: dict(), groups: dict(), chats: dict(), stats: { messages: 0, voice: 0, audio: 0, since: Date.now(), days: dict() } };
   try {
     const j = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     d.seq = Number(j.seq) || 0;
-    if (j.stats) d.stats = { messages: Number(j.stats.messages) || 0, voice: Number(j.stats.voice) || 0, since: Number(j.stats.since) || Date.now() };
+    if (j.stats) d.stats = { messages: Number(j.stats.messages) || 0, voice: Number(j.stats.voice) || 0, audio: Number(j.stats.audio) || 0, since: Number(j.stats.since) || Date.now(),
+      days: dict(j.stats.days && typeof j.stats.days === 'object' ? j.stats.days : {}) };
     for (const n of Object.keys(j.users || {})) { const u = j.users[n]; u.contacts = dict(u.contacts); u.read = dict(u.read); d.users[n] = u; }
     d.groups = dict(j.groups); d.chats = dict(j.chats);
   } catch (e) { if (e.code !== 'ENOENT') console.error('db.json nicht lesbar', e.message); }
@@ -109,6 +115,23 @@ function flush() {
     fs.writeFileSync(tmp, JSON.stringify(db));
     fs.renameSync(tmp, DB_FILE);
   } catch (e) { console.error('Speichern fehlgeschlagen', e.message); }
+  sweepAudio();
+}
+/* Audiodateien liegen nicht in db.json (die bei jedem Speichern ganz geschrieben wird), sondern als data/audio/<id>.b64.
+   Dateien, zu denen keine Nachricht mehr gehört (Verlauf gekürzt, gelöscht, Konto weg), werden hier entfernt – höchstens einmal je Minute. */
+let sweepAt = 0, sweepTimer = null;
+function sweepAudio() {
+  if (sweepTimer) return;
+  const wait = Math.max(0, sweepAt + 60000 - Date.now());
+  sweepTimer = setTimeout(() => {
+    sweepTimer = null; sweepAt = Date.now();
+    let files;
+    try { files = fs.readdirSync(AUDIO_DIR); } catch (e) { return; }
+    const keep = new Set();
+    for (const k in db.chats) for (const m of db.chats[k].msgs) if (m.a) keep.add(m.id + '.b64');
+    for (const f of files) if (!keep.has(f)) try { fs.unlinkSync(path.join(AUDIO_DIR, f)); } catch (e) { /* egal */ }
+  }, wait);
+  sweepTimer.unref();
 }
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { if (saveTimer) flush(); process.exit(0); });
 process.on('uncaughtException', (e) => { console.error('Unerwarteter Fehler', e); if (saveTimer) flush(); process.exit(1); });
@@ -172,7 +195,7 @@ function meView(u) {
   return { name: u.name, aliases: (u.aliases || []).slice(), cfg: u.cfg, contacts: c.ok.sort(), invitesOut: c.out.sort(), invitesIn: c.in.sort(), blocked: u.blocked.slice().sort(),
     groups: u.groups.filter((g) => db.groups[g]).map((g) => groupView(db.groups[g])),
     groupInvites: u.ginv.filter((g) => db.groups[g]).map((g) => groupView(db.groups[g])),
-    timeline: !!u.tl, pubKey: u.pk || '', server: serverInfo(),
+    timeline: !!u.tl, pubKey: u.pk || '', dev: u.dev || null, server: serverInfo(),
     pauseLeft: Math.max(0, Math.ceil(((u.pushOff || 0) - now()) / 60000)) };   // Minuten, bis die Push-Pause endet
 }
 /* Nachricht für einen Leser: nur sein eigener Schlüsselumschlag */
@@ -180,6 +203,7 @@ function msgView(m, reader) {
   const v = { id: m.id, f: m.f, ts: m.ts, e: m.e ? { v: m.e.v, n: m.e.n, c: m.e.c, k: m.e.k[reader] || null } : null };
   if (m.t) v.t = m.t;                        // nur Systemnachrichten haben Klartext
   if (m.v) v.v = 1;                          // per Diktat (Spracherkennung) erstellt
+  if (m.a) v.a = m.a;                        // Sprachnachricht: Größe der verschlüsselten Audiodaten in Byte
   return v;
 }
 /* Verschlüsselte Nachricht prüfen: {v:1, n:Nonce, c:Chiffretext, k:{name: Umschlag}} – Klartext wird nicht angenommen */
@@ -194,19 +218,46 @@ function cleanEnc(e, names) {
 }
 function groupView(g) { return { id: g.id, title: g.title, owner: g.owner, members: g.members.slice(), invited: g.invited.slice() }; }
 function serverInfo() {
-  return { donate: DONATE_URL, name: SERVER_NAME, version: VERSION, registration: REGISTER_CODE ? 'code' : 'open', historyMax: HISTORY_MAX, historyDays: HISTORY_DAYS, textMax: TEXT_MAX,
+  return { donate: DONATE_URL, name: SERVER_NAME, version: VERSION, registration: REGISTER_CODE ? 'code' : 'open', historyMax: HISTORY_MAX, historyDays: HISTORY_DAYS, textMax: TEXT_MAX, audioSec: AUDIO_SEC,
     ntfy: NTFY_URL === 'off' ? '' : NTFY_URL, pushoverToken: !!PUSHOVER_TOKEN };
 }
 
+/* Tageszähler für die Zeitleiste der Info-Seite (UTC-Tage, nur die letzten 60 Tage bleiben) */
+function dayStats(day) {
+  const days = db.stats.days;
+  if (!days[day]) {
+    days[day] = { m: 0, v: 0, a: 0 };
+    const keys = Object.keys(days).sort();
+    while (keys.length > 60) delete days[keys.shift()];
+  }
+  return days[day];
+}
+function lastDays(n) {
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const day = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10), d = db.stats.days[day] || {};
+    out.push({ day, messages: d.m || 0, voice: d.v || 0, audio: d.a || 0 });
+  }
+  return out;
+}
 /* Nachricht speichern und Empfänger benachrichtigen */
-function postMessage(u, a, e, voice) {
+function postMessage(u, a, e, voice, audio) {
   const ch = chatOf(a.key);
   const msg = { id: ++db.seq, f: u.name, e, ts: now() };
   if (voice) msg.v = 1;
+  if (audio) {
+    fs.mkdirSync(AUDIO_DIR, { recursive: true });
+    fs.writeFileSync(path.join(AUDIO_DIR, msg.id + '.b64'), audio);
+    msg.a = Buffer.byteLength(audio, 'base64');
+  }
   ch.msgs.push(msg);
   if (ch.msgs.length > HISTORY_MAX) ch.msgs.splice(0, ch.msgs.length - HISTORY_MAX);
   u.read[a.key] = msg.id;
-  if (!u.test) { db.stats.messages++; if (voice) db.stats.voice++; }
+  if (!u.test) {
+    db.stats.messages++; if (voice) db.stats.voice++; if (audio) db.stats.audio++;
+    const d = dayStats(new Date().toISOString().slice(0, 10));
+    d.m++; if (voice) d.v++; if (audio) d.a++;
+  }
   save();
   for (const n of a.to) wake(n);
   for (const n of a.to) {
@@ -371,7 +422,7 @@ function otherUser(n) { const r = userByName(needName(n)); if (!r) fail(404, 'Nu
 function unlinkContact(a, b) { delete a.contacts[b.name]; delete b.contacts[a.name]; }
 
 const routes = [];
-const route = (method, re, auth, fn) => routes.push({ method, re, auth, fn });
+const route = (method, re, auth, fn, max) => routes.push({ method, re, auth, fn, max: max || BODY_MAX });   // max: größte Anfrage in Byte
 
 route('GET', /^\/v1\/info$/, false, () => serverInfo());
 
@@ -437,6 +488,7 @@ route('PUT', /^\/v1\/me$/, true, (req, b, u) => {
     if (tl !== u.tl) console.log('Timeline-Token', tl ? 'gesetzt' : 'entfernt', 'für', u.name);
     u.tl = tl;
   }
+  if (b.dev && typeof b.dev === 'object') u.dev = { spk: b.dev.spk === true, rec: b.dev.rec === true };   // Uhr kann abspielen/aufnehmen
   if (typeof b.pubKey === 'string') {
     if (!B64.test(b.pubKey) || b.pubKey.length !== 44) fail(400, 'Ungültiger öffentlicher Schlüssel');
     if (b.pubKey !== u.pk) { u.pk = b.pubKey; u.pkTs = now(); }
@@ -640,7 +692,9 @@ route('GET', /^\/v1\/keys$/, true, (req, b, u) => {
   for (const gid of u.groups) if (db.groups[gid]) db.groups[gid].members.forEach((n) => names.add(n));
   const keys = {};
   for (const n of names) if (db.users[n] && db.users[n].pk) keys[n] = db.users[n].pk;
-  return { keys };
+  /* Uhr mit Lautsprecher und Mikrofon: kann Sprachnachrichten abspielen und beantworten */
+  const voice = [...names].filter((n) => db.users[n] && db.users[n].dev && db.users[n].dev.spk && db.users[n].dev.rec);
+  return { keys, voice };
 });
 
 /* Chats und Nachrichten */
@@ -659,6 +713,25 @@ route('POST', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/messages$/, true, (req, b,
   const e = cleanEnc(b.e, [u.name].concat(a.to));
   if (limited('msg:' + u.name, 30, 60000) || limited('msgh:' + u.name, 600, 3600000)) fail(429, 'Zu viele Nachrichten, bitte kurz warten');
   return { msg: msgView(postMessage(u, a, e, b.voice === true), u.name) };
+});
+/* Sprachnachricht: e = verschlüsselter Hinweistext (alte Apps zeigen ihn), audio = verschlüsselte Audiodaten (Base64) */
+route('POST', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/audio$/, true, (req, b, u, m) => {
+  if (!AUDIO_SEC) fail(403, 'Sprachnachrichten sind auf diesem Server aus');
+  const a = chatAccess(u, m[1]);
+  if (!a) fail(404, 'Chat nicht gefunden');
+  if (a.sys) fail(403, 'Dieser Chat ist schreibgeschützt');
+  const e = cleanEnc(b.e, [u.name].concat(a.to));
+  if (typeof b.audio !== 'string' || b.audio.length < 80 || b.audio.length > AUDIO_B64_MAX || !B64.test(b.audio)) fail(400, 'Ungültige Sprachnachricht');
+  if (limited('aud:' + u.name, 20, 600000) || limited('msg:' + u.name, 30, 60000) || limited('msgh:' + u.name, 600, 3600000)) fail(429, 'Zu viele Nachrichten, bitte kurz warten');
+  return { msg: msgView(postMessage(u, a, e, false, b.audio), u.name) };
+}, AUDIO_B64_MAX + 8192);
+route('GET', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/audio\/(\d{1,12})$/, true, (req, b, u, m) => {
+  const a = chatAccess(u, m[1]);
+  const msg = a && db.chats[a.key] && db.chats[a.key].msgs.find((x) => x.id === Number(m[2]));
+  if (!msg || !msg.a) fail(404, 'Sprachnachricht nicht gefunden');
+  let audio;
+  try { audio = fs.readFileSync(path.join(AUDIO_DIR, msg.id + '.b64'), 'utf8'); } catch (e) { fail(404, 'Sprachnachricht nicht gefunden'); }
+  return { id: msg.id, audio };
 });
 /* Eigene Nachricht löschen: verschwindet für alle; die Chat-Nummer "del" meldet es beim Polling */
 route('DELETE', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/messages\/(\d{1,12})$/, true, (req, b, u, m) => {
@@ -692,7 +765,7 @@ route('POST', /^\/v1\/test$/, true, (req, b, u) => {
 /* Alles Neue seit "since" (Nachrichten-Nummer) – ein Aufruf reicht fürs Polling */
 /* Öffentliche Statistik für die Info-Seite (nur Zähler, nichts Persönliches) */
 route('GET', /^\/v1\/stats$/, false, () => ({ users: Object.values(db.users).filter((x) => !x.test).length, groups: Object.keys(db.groups).length,
-  messages: db.stats.messages, voice: db.stats.voice, since: db.stats.since, version: VERSION, name: SERVER_NAME }));
+  messages: db.stats.messages, voice: db.stats.voice, audio: db.stats.audio, since: db.stats.since, days: lastDays(14), version: VERSION, name: SERVER_NAME }));
 
 /* ------------------------------------------------------------------ Admin -- */
 /* Betreiber-Seite /admin. Schlüssel: ADMIN_KEY (Umgebung) oder SHA-256 des Schlüssels in data/admin-key.
@@ -723,7 +796,7 @@ route('GET', /^\/v1\/admin\/users$/, false, (req) => {
   const us = Object.values(db.users);
   return { version: VERSION, users: us.map(adminUser).sort((a, b) => b.created - a.created),
     stats: { users: us.filter((x) => !x.test).length, test: us.filter((x) => x.test).length, groups: Object.keys(db.groups).length,
-      chats: Object.keys(db.chats).length, messages: db.stats.messages, voice: db.stats.voice, since: db.stats.since } };
+      chats: Object.keys(db.chats).length, messages: db.stats.messages, voice: db.stats.voice, audio: db.stats.audio, since: db.stats.since } };
 });
 route('DELETE', /^\/v1\/admin\/users\/([a-z0-9_]{3,16})$/, false, (req, b, u, m) => {
   needAdmin(req);
@@ -827,6 +900,8 @@ const EN_ERR = { 'Ungültiges ntfy-Thema (12–64 Zeichen A–Z, 0–9, _ -)': '
   'Zu viele Kontakte': 'Too many contacts', 'Zu viele Zweitnamen': 'Too many aliases', 'Zu viele Nachrichten, bitte kurz warten': 'Too many messages, please wait a moment',
   'Zu viele Registrierungen, bitte später': 'Too many registrations, please try later', 'Zu viele neue Gruppen, bitte später': 'Too many new groups, please try later',
   'Ungültige Adresse': 'Invalid address', 'Nicht gefunden': 'Not found', 'Zu viele Anfragen': 'Too many requests', 'Nur der Besitzer der Gruppe darf das': 'Only the group owner can do that',
+  'Sprachnachrichten sind auf diesem Server aus': 'Voice messages are turned off on this server', 'Ungültige Sprachnachricht': 'Invalid voice message',
+  'Sprachnachricht nicht gefunden': 'Voice message not found',
   'Nachricht nicht gefunden': 'Message not found', 'Nur eigene Nachrichten können gelöscht werden': 'You can only delete your own messages', 'Zu groß': 'Too large', 'Serverfehler': 'Server error', 'Admin-Schlüssel falsch': 'Wrong admin key' };
 function english(msg) {
   if (EN_ERR[msg]) return EN_ERR[msg];
@@ -867,10 +942,10 @@ function handleReq(req, res) {
   if (!r) return send(res, 404, { error: 'Nicht gefunden' });
   if (limited('ip:' + clientIp(req), 600, 60000)) return send(res, 429, { error: 'Zu viele Anfragen' });
   let size = 0; const chunks = [];
-  req.on('data', (c) => { size += c.length; if (size > BODY_MAX) { send(res, 413, { error: 'Zu groß' }); req.destroy(); } else chunks.push(c); });
+  req.on('data', (c) => { size += c.length; if (size > r.max) { send(res, 413, { error: 'Zu groß' }); req.destroy(); } else chunks.push(c); });
   req.on('error', () => { /* egal */ });
   req.on('end', () => {
-    if (size > BODY_MAX) return;
+    if (size > r.max) return;
     try {
       let body = {};
       if (size) { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (e) { fail(400, 'Ungültiges JSON'); } }
