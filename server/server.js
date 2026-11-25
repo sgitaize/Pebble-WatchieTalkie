@@ -47,7 +47,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.12.0';
+const VERSION = '1.12.1';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -720,6 +720,9 @@ route('POST', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/audio$/, true, (req, b, u,
   const a = chatAccess(u, m[1]);
   if (!a) fail(404, 'Chat nicht gefunden');
   if (a.sys) fail(403, 'Dieser Chat ist schreibgeschützt');
+  // nur wenn alle (auch der Absender) Lautsprecher und Mikrofon haben – sonst bleibt es beim Diktat
+  const canVoice = (n) => db.users[n] && db.users[n].dev && db.users[n].dev.spk && db.users[n].dev.rec;
+  if (![u.name].concat(a.to).every(canVoice)) fail(403, 'Sprachnachrichten gehen nur, wenn alle eine Uhr mit Lautsprecher und Mikrofon haben');
   const e = cleanEnc(b.e, [u.name].concat(a.to));
   if (typeof b.audio !== 'string' || b.audio.length < 80 || b.audio.length > AUDIO_B64_MAX || !B64.test(b.audio)) fail(400, 'Ungültige Sprachnachricht');
   if (limited('aud:' + u.name, 20, 600000) || limited('msg:' + u.name, 30, 60000) || limited('msgh:' + u.name, 600, 3600000)) fail(429, 'Zu viele Nachrichten, bitte kurz warten');
@@ -901,6 +904,7 @@ const EN_ERR = { 'Ungültiges ntfy-Thema (12–64 Zeichen A–Z, 0–9, _ -)': '
   'Zu viele Registrierungen, bitte später': 'Too many registrations, please try later', 'Zu viele neue Gruppen, bitte später': 'Too many new groups, please try later',
   'Ungültige Adresse': 'Invalid address', 'Nicht gefunden': 'Not found', 'Zu viele Anfragen': 'Too many requests', 'Nur der Besitzer der Gruppe darf das': 'Only the group owner can do that',
   'Sprachnachrichten sind auf diesem Server aus': 'Voice messages are turned off on this server', 'Ungültige Sprachnachricht': 'Invalid voice message',
+  'Sprachnachrichten gehen nur, wenn alle eine Uhr mit Lautsprecher und Mikrofon haben': 'Voice messages only work when everyone has a watch with speaker and microphone',
   'Sprachnachricht nicht gefunden': 'Voice message not found',
   'Nachricht nicht gefunden': 'Message not found', 'Nur eigene Nachrichten können gelöscht werden': 'You can only delete your own messages', 'Zu groß': 'Too large', 'Serverfehler': 'Server error', 'Admin-Schlüssel falsch': 'Wrong admin key' };
 function english(msg) {

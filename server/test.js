@@ -91,6 +91,11 @@ async function main() {
   r = await api('GET', '/v1/keys', null, ta);
   ok(Array.isArray(r.body.voice) && r.body.voice.includes(B) && !r.body.voice.includes(A), '/v1/keys meldet Kontakte mit Lautsprecher und Mikrofon');
   const audio = rnd(9000);
+  ok((await api('POST', '/v1/chats/u.' + B + '/audio', { e: enc([A, B]), audio }, ta)).status === 403, 'Absender ohne Lautsprecher/Mikrofon abgelehnt');
+  await api('PUT', '/v1/me', { dev: { spk: false, rec: true } }, tb);
+  await api('PUT', '/v1/me', { dev: { spk: true, rec: true } }, ta);
+  ok((await api('POST', '/v1/chats/u.' + B + '/audio', { e: enc([A, B]), audio }, ta)).status === 403, 'an Uhr ohne Lautsprecher abgelehnt');
+  await api('PUT', '/v1/me', { dev: { spk: true, rec: true } }, tb);
   r = await api('POST', '/v1/chats/u.' + B + '/audio', { e: enc([A, B]), audio }, ta);
   ok(r.status === 200 && r.body.msg.a === 9000, 'Sprachnachricht hochgeladen, Größe in a');
   const audId = r.body.msg.id;
