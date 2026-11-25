@@ -208,12 +208,10 @@ function voiceOk(cid) {
   var names = chatNames(cid);
   return names.length > 0 && names.every(function (n) { return voiceNames.indexOf(n) >= 0; });
 }
-/* Text einer Sprachnachricht auf der Uhr (Uhren ohne Lautsprecher bekommen einen Hinweis) */
-function voiceLabel(a, short) {
-  var d = AUDIO.fmt(AUDIO.durationDs(a));
-  if (hasSpeaker() || short) return (sysEmoji() ? '\uD83D\uDD0A ' : '') + 'Voice message ' + d;
-  return (sysEmoji() ? '\uD83C\uDFA4 ' : '') + 'Voice message ' + d + ' (play it on a Pebble with speaker)';
-}
+/* Text einer Sprachnachricht auf der Uhr. Uhren ohne Lautsprecher bekommen Sprachnachrichten gar nicht erst angezeigt
+   (normal kommen dort keine an: der Knopf erscheint nur, wenn alle Gegenüber abspielen können). */
+function voiceLabel(a) { return (sysEmoji() ? '\uD83D\uDD0A ' : '') + 'Voice message ' + AUDIO.fmt(AUDIO.durationDs(a)); }
+function hiddenVoice(msg) { return !!(msg && msg.a) && !hasSpeaker(); }
 /* Empfänger eines Chats mit Schlüsseln; fehlende Schlüssel werden gemeldet */
 function recipients(cid) {
   var names = chatNames(cid);
@@ -266,7 +264,7 @@ function loadChats() {
       m.invitesIn.forEach(function (n) { items.push({ id: 'u.' + n, title: n, kind: K.CONTACT_INVITE, unread: 0, text: '' }); });
       m.groupInvites.forEach(function (g) { items.push({ id: 'g.' + g.id, title: g.title, kind: K.GROUP_INVITE, unread: 0, text: '' }); });
       c.chats.forEach(function (ch) {
-        var prev = ch.last ? (ch.group && ch.last.f !== m.name ? ch.last.f + ': ' : (ch.last.f === m.name ? 'You: ' : '')) + (ch.last.a ? voiceLabel(ch.last.a, true) : readable(ch.last)) : (ch.group ? 'Group' : '');
+        var prev = ch.last && !hiddenVoice(ch.last) ? (ch.group && ch.last.f !== m.name ? ch.last.f + ': ' : (ch.last.f === m.name ? 'You: ' : '')) + (ch.last.a ? voiceLabel(ch.last.a) : readable(ch.last)) : (ch.group ? 'Group' : '');
         if (!ch.group && changedList().indexOf(ch.title) >= 0) prev = '! Key changed';
         items.push({ id: ch.id, title: ch.title, kind: K.CHAT, unread: Math.min(ch.unread, 99), text: prev });
       });
@@ -304,13 +302,14 @@ function loadMessages(cid) {
       return status(errText(err) + '. Retrying in ' + s + ' s ...');
     }
     retryDone('msgs');
-    var msgs = r.msgs || [];
+    var all = r.msgs || [];
+    if (all.length) api('POST', '/v1/chats/' + cid + '/read', { upTo: all[all.length - 1].id }, function () {});
+    var msgs = all.filter(function (msg) { return !hiddenVoice(msg); });
     if (!msgs.length) { toWatch({ CMD: C.MSG_ITEM, CHAT: cid, IDX: 0, COUNT: 0 }); return; }
     var bytes = platform() === 'aplite' ? 200 : 400;
     msgs.forEach(function (msg, i) {
       toWatch(Object.assign({ CMD: C.MSG_ITEM, CHAT: cid, IDX: i, COUNT: msgs.length, FROM: msg.f }, watchMsg(msg, cid, bytes)));
     });
-    api('POST', '/v1/chats/' + cid + '/read', { upTo: msgs[msgs.length - 1].id }, function () {});
   });
 }
 
@@ -355,7 +354,7 @@ function finishRec() {
   var out;
   try {
     var bytes = r.r.finish();
-    out = E2E.encryptAudio('\uD83C\uDFA4 Voice message ' + AUDIO.fmt(r.r.seconds() * 10) + ' (update WatchieTalkie2 on a Pebble with speaker to play it)', bytes, k.keys);
+    out = E2E.encryptAudio('\uD83C\uDFA4 Voice message ' + AUDIO.fmt(r.r.seconds() * 10), bytes, k.keys);
   } catch (x) { return fail('Encryption failed'); }
   api('POST', '/v1/chats/' + cid + '/audio', out, function (err) {
     toWatch(err ? { CMD: C.SENT, FLAGS: 0, TEXT: trunc(errText(err), 60) } : { CMD: C.SENT, FLAGS: 1 });
@@ -442,7 +441,7 @@ function poll() {
     if (r.seq >= seq) {
       fresh = (r.msgs || []).filter(function (msg) { return msg.id > seq; });
       fresh.forEach(function (msg) {
-        toWatch(Object.assign({ CMD: C.NEW_MSG, CHAT: msg.chat, FROM: msg.f }, watchMsg(msg, msg.chat, platform() === 'aplite' ? 200 : 400)));
+        if (!hiddenVoice(msg)) toWatch(Object.assign({ CMD: C.NEW_MSG, CHAT: msg.chat, FROM: msg.f }, watchMsg(msg, msg.chat, platform() === 'aplite' ? 200 : 400)));
         if (msg.chat === openChat) api('POST', '/v1/chats/' + msg.chat + '/read', { upTo: msg.id }, function () {});
       });
       seq = Math.max(seq, r.seq);
