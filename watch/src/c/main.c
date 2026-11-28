@@ -88,6 +88,10 @@ static GColor soft(void) {
 #if defined(PBL_SPEAKER)
 #define VOICE_PLAY 1
 #endif
+/* Sprachtest (Echo): Aufnahme geht nur bis zum Handy, wird dort kodiert, an einen selbst verschlüsselt, wieder entschlüsselt
+   und sofort auf der Uhr abgespielt – ohne Server. Aus dem Listenmenü (langes SELECT) oder im System-Chat „WatchieTalkie“. */
+#define ECHO_MID 0x7FFFFFF0
+#define ECHO_CID "_echo"
 #if defined(VOICE_REC)
 #define VOICE_REC_ON 1
 #else
@@ -103,7 +107,7 @@ static int s_chat_count;
 enum { T_LOADING, T_EMPTY_CHAT, T_EMOJI, T_ACCEPT, T_DECLINE, T_CONTACT_REQ, T_GROUP_INV, T_NO_VOICE, T_NEW_FROM, T_SEND_FAILED,
   T_DELETE_LAST, T_DELETE_YES, T_CANCEL, T_PAUSE, T_RESUME, T_BEEP_ON, T_BEEP_OFF, T_CONNECTING, T_NO_PHONE, T_NO_ANSWER, T_PHONE_LOST, T_CONF_HEAD, T_CONF_HINT, T_DICTATED,
   T_REC, T_PLAY_LAST, T_VOICES, T_REC_HEAD, T_REC_WAIT, T_REC_HINT, T_REC_FULL, T_PLAY_WAIT, T_PLAY_HINT, T_PLAY_DONE, T_MIC_BUSY, T_MIC_FAIL,
-  T_MIC_PHONE, T_MUTED, T_YOU, T_PLAY_FAIL };
+  T_MIC_PHONE, T_MUTED, T_YOU, T_PLAY_FAIL, T_VTEST, T_ECHO };
 static const char *T_EN[] = { "Loading …", "No messages yet.\nSELECT: speak\nhold SELECT: emoji, quick reply", T_EMOJI_TXT,
   "Accept", "Decline", "Contact request", "Group invitation", "Voice not available", "New from %s", "Sending failed",
   "Delete my last message", "Yes, delete it", "Cancel", "Pause push", "Resume push", "Beep on", "Beep off",
@@ -112,7 +116,7 @@ static const char *T_EN[] = { "Loading …", "No messages yet.\nSELECT: speak\nh
   "\xF0\x9F\x8E\xA4  Voice message", "\xF0\x9F\x94\x8A  Play latest", "Voice messages …", "Recording", "Starting microphone …",
   "SELECT: send\nBACK: cancel", "Time is up.\nSELECT: send\nBACK: cancel", "Loading …", "SELECT: from the start\nBACK: stop",
   "SELECT: play again\nBACK: close", "Microphone is busy", "Microphone not available", "Phone stopped the microphone",
-  "Speaker is muted\n(Settings → Sounds)", "You", "Playback failed" };
+  "Speaker is muted\n(Settings → Sounds)", "You", "Playback failed", "\xF0\x9F\x8E\xA4  Voice test", "Echo" };
 #define TR(i) (T_EN[i])
 static char s_status[160] = "…";
 
@@ -589,17 +593,23 @@ static void rec_start(void) {
   if (!s_rec_used) { s_vstate = VS_ERR; s_verr = TR(r == MicStreamStartErrBusy ? T_MIC_BUSY : T_MIC_FAIL); }
   voice_dirty();
 }
+static bool s_echo;                         /* Aufnahme ist ein Sprachtest (Echo) */
+static uint32_t s_echo_ms;
+static void echo_play(void *ctx);
 static void rec_finish(bool send) {
   if (mic_stream_to_phone_is_active()) mic_stream_to_phone_stop();
-  if (s_rec_used) send_cmd(C_REC_END, s_open_chat, send ? "1" : "0");
+  bool used = s_rec_used;
+  if (used) send_cmd(C_REC_END, s_open_chat[0] ? s_open_chat : ECHO_CID, send ? "1" : "0");
   s_rec_used = false;
   if (send && s_open_chat[0]) {
     char t[48], d[12];
     fmt_time(d, sizeof(d), s_vms);
     snprintf(t, sizeof(t), "%s %s", TR(T_REC), d);
     msg_append("", t, true, time(NULL), false);
+    if (s_echo && s_msg_count) { s_msgs[s_msg_count - 1].mid = ECHO_MID; s_msgs[s_msg_count - 1].dur = s_vms / 100; }
     chat_relayout(true);
   }
+  if (send && used && s_echo) { s_echo_ms = s_vms; app_timer_register(400, echo_play, NULL); }   /* nach dem Schließen abspielen */
 }
 #endif
 
@@ -756,7 +766,8 @@ static void voice_unload(Window *w) {
 }
 static void voice_open(int mode, const char *title);
 #if defined(VOICE_REC)
-static void rec_open(void) { voice_open(V_REC, s_open_title); }
+static bool sys_chat(void);
+static void rec_open(void) { s_echo = !s_open_chat[0] || sys_chat(); voice_open(V_REC, s_open_chat[0] && !sys_chat() ? s_open_title : TR(T_VTEST)); }
 #endif
 static void voice_open(int mode, const char *title) {
   if (s_voice_win) return;
@@ -777,6 +788,14 @@ static void play_open(Msg *m) {
   s_pmid = m->mid; s_prx = 0;
   voice_open(V_PLAY, m->mine ? TR(T_YOU) : m->from);
   s_vtotal = m->dur * 100;
+}
+#endif
+#if defined(VOICE_REC)
+static void echo_play(void *ctx) {
+  if (s_voice_win) return;
+  s_pmid = ECHO_MID; s_prx = 0;
+  voice_open(V_PLAY, TR(T_ECHO));
+  s_vtotal = s_echo_ms;
 }
 #endif
 static void chat_select(ClickRecognizerRef r, void *ctx) { start_talk(); }
@@ -870,11 +889,11 @@ static Chat s_pick_chat;
 #define BEEP_ROWS 0
 #endif
 /* Menü im Chat (P_REPLY): oben Emoji, Letzte löschen, Push pausieren – darunter die Schnellantworten.
-   Listenmenü (P_LIST): Push pausieren, Piep an/aus. System-Chat: nur lesbar, kein Emoji/Löschen. */
+   Listenmenü (P_LIST): Sprachtest, Push pausieren, Piep an/aus. System-Chat: Echo (Text und Sprachtest), kein Emoji/Löschen. */
 enum { R_REC, R_PLAY, R_VOICES, R_EMOJI, R_DELETE, R_PAUSE, R_BEEP, R_QR };
 static bool sys_chat(void) { return !strcmp(s_open_chat, "u.watchietalkie"); }
 /* Ganz oben im Chat-Menü: Sprachnachricht aufnehmen, neueste abspielen, alle Sprachnachrichten (je nach Uhr und Chat) */
-static bool rec_ok(void) { return PBL_IF_MICROPHONE_ELSE(s_open_voice && !sys_chat(), false) && VOICE_REC_ON; }
+static bool rec_ok(void) { return PBL_IF_MICROPHONE_ELSE(s_open_voice || sys_chat(), false) && VOICE_REC_ON; }   /* System-Chat: Sprachtest */
 static int play_n(void) {
 #if defined(VOICE_PLAY)
   return voice_count();
@@ -883,11 +902,11 @@ static int play_n(void) {
 #endif
 }
 static int pick_opts(void) {
-  if (s_pick_mode == P_LIST) return (s_push_avail ? 1 : 0) + BEEP_ROWS;
+  if (s_pick_mode == P_LIST) return VOICE_REC_ON + (s_push_avail ? 1 : 0) + BEEP_ROWS;
   return (rec_ok() ? 1 : 0) + (play_n() > 0) + (play_n() > 1) + (sys_chat() ? 0 : 2) + (s_push_avail ? 1 : 0);
 }
 static int row_kind(int r) {
-  if (s_pick_mode == P_LIST) return s_push_avail && r == 0 ? R_PAUSE : R_BEEP;
+  if (s_pick_mode == P_LIST) { if (VOICE_REC_ON) { if (r == 0) return R_REC; r--; } return s_push_avail && r == 0 ? R_PAUSE : R_BEEP; }
   if (rec_ok()) { if (r == 0) return R_REC; r--; }
   int pn = play_n();
   if (pn > 0) { if (r == 0) return R_PLAY; r--; }
@@ -946,7 +965,7 @@ static void pick_draw(GContext *ctx, const Layer *cell, MenuIndex *idx, void *da
   }
 #endif
   switch (row_kind(r)) {
-    case R_REC: cell_draw(ctx, cell, TR(T_REC), NULL); break;
+    case R_REC: cell_draw(ctx, cell, TR(s_open_chat[0] && !sys_chat() ? T_REC : T_VTEST), NULL); break;
     case R_VOICES: cell_draw(ctx, cell, TR(T_VOICES), NULL); break;
 #if defined(SYS_EMOJI)
     case R_EMOJI: cell_draw(ctx, cell, TR(T_EMOJI), NULL); break;
@@ -1128,7 +1147,7 @@ static void main_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
 }
 /* Langes SELECT in der Liste: kleines Menü (Push pausieren, Piep an/aus) – nur wenn es etwas zu wählen gibt */
 static void main_long_select(MenuLayer *m, MenuIndex *idx, void *ctx) {
-  if (s_push_avail || BEEP_ROWS) pick_open(P_LIST, false);
+  if (VOICE_REC_ON || s_push_avail || BEEP_ROWS) pick_open(P_LIST, false);
 }
 static void main_load(Window *w) {
   Layer *root = window_get_root_layer(w);

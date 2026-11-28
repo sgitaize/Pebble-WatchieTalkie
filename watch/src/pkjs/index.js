@@ -10,7 +10,8 @@ var DEFAULT_SERVER = 'https://watchietalkie.aize-it.de';
 var CONFIG_URL = 'https://sgitaize.github.io/Pebble-WatchieTalkie/config/';
 var C = { LIST_ITEM: 2, MSG_ITEM: 5, NEW_MSG: 7, QR_ITEM: 8, STATUS: 9, SENT: 10, AUD_DATA: 13,
   REC_END: 31, PLAY: 32, AUD_MORE: 33, READY: 20, OPEN: 21, SEND: 22, CLOSE: 23, ACCEPT: 24, DECLINE: 25, SEND_VOICE: 26, TEST: 27, BEEP: 28, DELETE: 29, PAUSE: 30, PUSH: 11, LOOK: 12 };
-var SYS_CID = 'u.watchietalkie';     // System-Chat des Servers (Testnachrichten, nur lesbar)
+var SYS_CID = 'u.watchietalkie';     // System-Chat des Servers (Testnachrichten); was man hineinschickt, kommt als Echo zurück
+var ECHO_CID = '_echo', ECHO_MID = 0x7FFFFFF0;   // Sprachtest aus dem Listenmenü (main.c ECHO_*)
 var K = { CHAT: 0, CONTACT_INVITE: 1, GROUP_INVITE: 2 };
 
 var server = localStorage.getItem('wt.server') || DEFAULT_SERVER;
@@ -316,7 +317,7 @@ function loadMessages(cid) {
 function sendMessage(cid, text, voice) {
   var fail = function (msg) { toWatch({ CMD: C.SENT, FLAGS: 0, TEXT: trunc(msg, 60) }); };
   if (!me || !E2E.ready()) return fail('Not set up');
-  if (cid === SYS_CID) return fail('This chat is read-only');
+  if (cid === SYS_CID) return echoText(text);
   var r = recipients(cid);
   if (r.total && r.missing.length === r.total) return fail(r.missing.join(', ') + ' must open WatchieTalkie2 first');
   var e;
@@ -326,17 +327,34 @@ function sendMessage(cid, text, voice) {
   });
 }
 
+/* Wie der Server: jede*r bekommt nur den eigenen Umschlag (e.k) */
+function selfEnv(e) { return { v: e.v, n: e.n, c: e.c, k: e.k.self }; }
+/* Test im System-Chat: Text an einen selbst verschlüsseln, entschlüsseln und als Echo zurückgeben (geht nicht an den Server) */
+function echoText(text) {
+  var t = String(text).slice(0, TEXT_MAX);
+  if (E2E.ready()) {
+    try { t = E2E.decrypt(selfEnv(E2E.encrypt(t, { self: E2E.publicKey() })), E2E.publicKey()); } catch (x) { t = null; }
+    if (t === null) return toWatch({ CMD: C.SENT, FLAGS: 0, TEXT: 'Encryption test failed' });
+  }
+  toWatch({ CMD: C.SENT, FLAGS: 1 });
+  setTimeout(function () {
+    toWatch({ CMD: C.NEW_MSG, CHAT: SYS_CID, FROM: 'WatchieTalkie', TEXT: msgText('Echo: ' + t, platform() === 'aplite' ? 200 : 400),
+      FLAGS: 0, TS: Math.floor(Date.now() / 1000) });
+  }, 800);
+}
+
 /* ------------------------------------------------------ Sprachnachrichten -- */
 /* Aufnehmen: die Uhr streamt ihr Mikrofon (mic_stream_to_phone_start) hierher; C.REC_END sagt, ob gesendet oder verworfen wird */
 var rec = null;              // { r: Recorder, stopped, send: Chat-ID, timer }
 Pebble.addEventListener('audiostreamstart', function (e) {
   var sec = (me && me.server && me.server.audioSec) || 30;
   rec = { r: new AUDIO.Recorder(e && e.sampleRate || 16000, sec), stopped: false, send: '', timer: null };
+  echo = null; echoWant = 0;
 });
 Pebble.addEventListener('audiostream', function (e) { if (rec && !rec.stopped && e && e.data) rec.r.push(e.data); });
 Pebble.addEventListener('audiostreamstop', function () { if (!rec) return; rec.stopped = true; if (rec.send) finishRec(); });
 function recEnd(cid, send) {
-  if (!rec) { if (send) toWatch({ CMD: C.SENT, FLAGS: 0, TEXT: 'No audio received' }); return; }
+  if (!rec) { if (send) { toWatch({ CMD: C.SENT, FLAGS: 0, TEXT: 'No audio received' }); if (isEcho(cid)) echoDone({ err: 'No audio received' }); } return; }
   if (!send) { rec = null; return; }
   rec.send = cid;
   if (rec.stopped) finishRec();
@@ -347,6 +365,7 @@ function finishRec() {
   if (!r) return;
   clearTimeout(r.timer);
   var cid = r.send, fail = function (msg) { toWatch({ CMD: C.SENT, FLAGS: 0, TEXT: trunc(msg, 60) }); };
+  if (isEcho(cid)) return echoRec(r.r);
   if (r.r.seconds() < 0.5) return fail('Voice message too short');
   if (!me || !E2E.ready()) return fail('Not set up');
   var k = recipients(cid);
@@ -360,6 +379,31 @@ function finishRec() {
     toWatch(err ? { CMD: C.SENT, FLAGS: 0, TEXT: trunc(errText(err), 60) } : { CMD: C.SENT, FLAGS: 1 });
   });
 }
+/* Sprachtest (Echo): kodieren, an einen selbst verschlüsseln, wieder entschlüsseln und gleich abspielen – ohne Server.
+   Die Uhr öffnet nach dem Senden die Wiedergabe (C.PLAY mit ECHO_MID); ist das Echo noch nicht fertig, wartet sie. */
+var echo = null, echoWant = 0;   // { bytes } oder { err } · angeforderte Bytes, solange das Echo noch nicht fertig ist
+function isEcho(cid) { return cid === ECHO_CID || cid === SYS_CID; }
+function echoRec(recorder) {
+  if (recorder.seconds() < 0.5) return echoDone({ err: 'Voice message too short' });
+  var b;
+  try {
+    b = recorder.finish();
+    if (E2E.ready()) {
+      var out = E2E.encryptAudio('\uD83C\uDFA4 Voice test', b, { self: E2E.publicKey() });
+      b = E2E.decryptAudio(selfEnv(out.e), E2E.publicKey(), out.audio);
+    }
+  } catch (x) { b = null; }
+  if (!b || b[0] !== 1 || b.length < 2) return echoDone({ err: 'Encryption test failed' });
+  toWatch({ CMD: C.SENT, FLAGS: 1 });
+  echoDone({ bytes: b.subarray(1) });
+}
+function echoDone(res) {
+  if (res.err) toWatch({ CMD: C.SENT, FLAGS: 0, TEXT: trunc(res.err, 60) });
+  echo = res;
+  if (play && play.mid === ECHO_MID) play = null;
+  if (echoWant) { var w = echoWant; echoWant = 0; startPlay(ECHO_MID, w); }
+}
+
 /* Abspielen: Audiodaten holen, entschlüsseln und stückweise an die Uhr geben. Die Uhr fordert Bereiche an (C.AUD_MORE von–bis),
    sobald in ihrem Puffer Platz ist – so läuft nichts über und es geht nichts verloren. */
 var CHUNK = 1500;
@@ -378,6 +422,12 @@ function startPlay(mid, first) {
   dropAudio();
   if (!mid) return;                                  // Uhr hat das Abspielen beendet
   if (play && play.mid === mid) return sendAudio(mid, 0, first);
+  if (mid === ECHO_MID) {
+    if (!echo) { echoWant = first; return; }        // Echo wird noch kodiert
+    if (echo.err) return audErr(mid, echo.err);
+    play = { mid: mid, bytes: echo.bytes };
+    return sendAudio(mid, 0, first);
+  }
   var m = audioMsgs[mid];
   if (!m) return audErr(mid, 'Voice message not found');
   api('GET', '/v1/chats/' + m.chat + '/audio/' + mid, null, function (err, r) {
