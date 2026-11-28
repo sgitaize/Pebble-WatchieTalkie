@@ -22,8 +22,6 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>WKApplication</key>
 	<true/>
-	<key>WKCompanionAppBundleIdentifier</key>
-	<string>de.sgitaize.watchietalkie</string>
 	<key>WKWatchOnly</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>

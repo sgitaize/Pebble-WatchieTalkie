@@ -10,6 +10,11 @@ rm -rf build/WT.xcarchive build/export
 xcodebuild -project WatchieTalkie.xcodeproj -scheme WatchieTalkie -configuration Release \
   -destination "generic/platform=iOS" -archivePath build/WT.xcarchive archive \
   CODE_SIGNING_ALLOWED=NO CURRENT_PROJECT_VERSION="$BUILD" -quiet
+# Unsigniert archiviert trägt die Hülle noch die Kennung von Apples Stub – ad-hoc mit den richtigen IDs vorsignieren,
+# der Export signiert danach richtig nach (Kennung bleibt erhalten)
+APP=build/WT.xcarchive/Products/Applications/WatchieTalkie.app
+codesign -f -s - -i de.sgitaize.watchietalkie.watchkitapp "$APP/Watch/WatchieTalkie Watch App.app"
+codesign -f -s - -i de.sgitaize.watchietalkie "$APP"
 xcodebuild -exportArchive -archivePath build/WT.xcarchive -exportOptionsPlist ExportOptions.plist \
   -exportPath build/export -allowProvisioningUpdates 2>&1 | grep -E "error|EXPORT|Upload" || true
 echo "Build $BUILD"
