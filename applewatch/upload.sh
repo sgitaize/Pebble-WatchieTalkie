@@ -8,7 +8,7 @@ BUILD="${1:-$(date +%Y%m%d%H%M)}"
 xcodegen generate -q
 rm -rf build/WT.xcarchive build/export
 xcodebuild -project WatchieTalkie.xcodeproj -scheme WatchieTalkie -configuration Release \
-  -destination "generic/platform=watchOS" -archivePath build/WT.xcarchive archive \
+  -destination "generic/platform=iOS" -archivePath build/WT.xcarchive archive \
   CODE_SIGNING_ALLOWED=NO CURRENT_PROJECT_VERSION="$BUILD" -quiet
 xcodebuild -exportArchive -archivePath build/WT.xcarchive -exportOptionsPlist ExportOptions.plist \
   -exportPath build/export -allowProvisioningUpdates 2>&1 | grep -E "error|EXPORT|Upload" || true

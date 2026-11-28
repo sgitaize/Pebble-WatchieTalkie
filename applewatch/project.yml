@@ -3,21 +3,38 @@ options:
   bundleIdPrefix: de.sgitaize
   deploymentTarget:
     watchOS: "10.0"
+    iOS: "17.0"
 settings:
   base:
     DEVELOPMENT_TEAM: V7GQKCH73F
     MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
 targets:
+  # Hülle wie in Apples Vorlage für reine Watch-Apps: nötig für den App Store, enthält nur die Uhren-App unter Watch/
   WatchieTalkie:
-    type: application
-    platform: watchOS
-    sources:
-      - path: WatchieTalkie
+    type: application.watchapp2-container
+    platform: iOS
+    scheme: {}
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.sgitaize.watchietalkie
         PRODUCT_NAME: WatchieTalkie
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: WatchieTalkie2
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+    dependencies:
+      - target: WatchieTalkie Watch App
+  WatchieTalkie Watch App:
+    type: application
+    platform: watchOS
+    scheme: {}
+    sources:
+      - path: WatchieTalkie
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.sgitaize.watchietalkie.watchkitapp
+        PRODUCT_NAME: WatchieTalkie Watch App
         INFOPLIST_FILE: WatchieTalkie/Info.plist
         SWIFT_OBJC_BRIDGING_HEADER: WatchieTalkie/NaCl/Bridging.h
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -25,5 +42,4 @@ targets:
         SWIFT_VERSION: "5.0"
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "4"
-        GCC_WARN_INHIBIT_ALL_WARNINGS: NO
-        SKIP_INSTALL: NO
+        SKIP_INSTALL: YES
