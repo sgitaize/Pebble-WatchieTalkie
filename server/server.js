@@ -20,6 +20,7 @@
  *   DONATE_URL        Spendenlink auf der Info-Seite (Standard: Projekt-Spendenlink, "off" = ausblenden)
  *   VOICE             "off" = keine Sprachnachrichten (Audio) annehmen
  *   ADMIN_KEY         Schlüssel für die Betreiber-Seite /admin (alternativ SHA-256 davon in data/admin-key; ohne = keine Admin-Seite)
+ *   AUDIO_TOTAL_MB    Obergrenze für alle Sprachnachrichten auf der Platte (Standard 500)
  */
 'use strict';
 const http = require('http');
@@ -28,6 +29,7 @@ const net = require('net');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const dns = require('dns');
 
 /* Log-Datei für Hosting ohne Shell (per FTP lesbar): logs/app.log, höchstens 120 Zeilen/min, ab 2 MB rotiert */
 const LOG_FILE = path.join(__dirname, 'logs', 'app.log');
@@ -47,7 +49,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.12.1';
+const VERSION = '1.12.2';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -73,6 +75,10 @@ const BODY_MAX = 32768;
 const AUDIO_SEC = process.env.VOICE === 'off' ? 0 : 30;
 const AUDIO_B64_MAX = Math.ceil((AUDIO_SEC * 4000 + 64) / 3) * 4;
 const AUDIO_DIR = path.join(DATA, 'audio');
+const AUDIO_TOTAL = (Number(process.env.AUDIO_TOTAL_MB) || 500) * 1024 * 1024;   // alle Audiodateien zusammen (Platte schützen)
+const AUDIO_USER_DAY = 15 * 1024 * 1024;   // je Konto und Tag (≈ 90 volle 30-s-Nachrichten)
+const NAME_HOLD_DAYS = HISTORY_DAYS;       // Name eines gelöschten Kontos / entfernter Zweitname bleibt so lange gesperrt
+const IDLE_DAYS = 30;                      // Konten ohne Kontakte/Gruppen, so lange nicht benutzt, werden entfernt
 const NAME_RE = /^[a-z0-9][a-z0-9_]{2,15}$/;
 const RESERVED = new Set(['admin', 'administrator', 'root', 'system', 'support', 'server', 'watchietalkie', 'watchietalkie2', 'psst', 'pebble', 'rebble',
   'null', 'undefined', 'constructor', 'prototype', 'hasownproperty', 'tostring', 'valueof']);
@@ -83,14 +89,14 @@ const DEFAULT_CFG = { qr: ['OK', 'On my way', 'Call me', 'Later', 'Yes', 'No', '
 /* Alle Nachschlage-Tabellen ohne Prototyp: Namen wie "constructor" oder "__proto__" können nichts manipulieren */
 const dict = (o) => Object.assign(Object.create(null), o || {});
 function loadDb() {
-  const d = { seq: 0, users: dict(), groups: dict(), chats: dict(), stats: { messages: 0, voice: 0, audio: 0, since: Date.now(), days: dict() } };
+  const d = { seq: 0, users: dict(), groups: dict(), chats: dict(), freed: dict(), stats: { messages: 0, voice: 0, audio: 0, since: Date.now(), days: dict() } };
   try {
     const j = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     d.seq = Number(j.seq) || 0;
     if (j.stats) d.stats = { messages: Number(j.stats.messages) || 0, voice: Number(j.stats.voice) || 0, audio: Number(j.stats.audio) || 0, since: Number(j.stats.since) || Date.now(),
       days: dict(j.stats.days && typeof j.stats.days === 'object' ? j.stats.days : {}) };
     for (const n of Object.keys(j.users || {})) { const u = j.users[n]; u.contacts = dict(u.contacts); u.read = dict(u.read); d.users[n] = u; }
-    d.groups = dict(j.groups); d.chats = dict(j.chats);
+    d.groups = dict(j.groups); d.chats = dict(j.chats); d.freed = dict(j.freed);
   } catch (e) { if (e.code !== 'ENOENT') console.error('db.json nicht lesbar', e.message); }
   return d;
 }
@@ -129,10 +135,18 @@ function sweepAudio() {
     try { files = fs.readdirSync(AUDIO_DIR); } catch (e) { return; }
     const keep = new Set();
     for (const k in db.chats) for (const m of db.chats[k].msgs) if (m.a) keep.add(m.id + '.b64');
-    for (const f of files) if (!keep.has(f)) try { fs.unlinkSync(path.join(AUDIO_DIR, f)); } catch (e) { /* egal */ }
+    let total = 0;
+    for (const f of files) {
+      if (!keep.has(f)) { try { fs.unlinkSync(path.join(AUDIO_DIR, f)); } catch (e) { /* egal */ } continue; }
+      try { total += fs.statSync(path.join(AUDIO_DIR, f)).size; } catch (e) { /* egal */ }
+    }
+    audioBytes = total;
   }, wait);
   sweepTimer.unref();
 }
+/* Belegter Platz aller Audiodateien (beim Start gezählt, beim Aufräumen neu bestimmt, beim Speichern hochgezählt) */
+let audioBytes = 0;
+try { for (const f of fs.readdirSync(AUDIO_DIR)) audioBytes += fs.statSync(path.join(AUDIO_DIR, f)).size; } catch (e) { /* noch keine */ }
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { if (saveTimer) flush(); process.exit(0); });
 process.on('uncaughtException', (e) => { console.error('Unerwarteter Fehler', e); if (saveTimer) flush(); process.exit(1); });
 
@@ -175,6 +189,8 @@ function chatTitle(u, cid) {
   const g = db.groups[cid.slice(2)];
   return g ? g.title : cid;
 }
+/* Nachrichten von Leuten, die u blockiert hat, sieht u nicht (wichtig für gemeinsame Gruppen) */
+const visible = (u, m) => !u.blocked.includes(m.f);
 function chatList(u) {
   const out = [];
   for (const n in u.contacts) if (u.contacts[n] === 'ok') out.push('u.' + n);
@@ -182,7 +198,7 @@ function chatList(u) {
   if (db.chats[sysKey(u.name)]) out.push(SYS_CID);
   return out.map((cid) => {
     const a = chatAccess(u, cid);
-    const msgs = (a && db.chats[a.key] && db.chats[a.key].msgs) || [];
+    const msgs = ((a && db.chats[a.key] && db.chats[a.key].msgs) || []).filter((m) => visible(u, m));
     const last = msgs[msgs.length - 1];
     const rd = u.read[a ? a.key : ''] || 0;
     return { id: cid, title: chatTitle(u, cid), group: cid[0] === 'g', unread: msgs.filter((x) => x.id > rd && x.f !== u.name).length,
@@ -248,6 +264,7 @@ function postMessage(u, a, e, voice, audio) {
   if (audio) {
     fs.mkdirSync(AUDIO_DIR, { recursive: true });
     fs.writeFileSync(path.join(AUDIO_DIR, msg.id + '.b64'), audio);
+    audioBytes += audio.length;
     msg.a = Buffer.byteLength(audio, 'base64');
   }
   ch.msgs.push(msg);
@@ -271,12 +288,36 @@ function postMessage(u, a, e, voice, audio) {
 /* Die Pebble-App liefert je Nutzer einen Timeline-Token (nur bei Installation über den App-Store).
    Damit legt der Server einen Pin mit Benachrichtigung an – die Uhr meldet sich auch bei geschlossener App. */
 let pushesSent = [];
-function pushBudget() {                        // Notbremse gegen Fluten: höchstens 120 Pushes/min
+/* Notbremse gegen Fluten: je Empfänger höchstens 30 Pushes in 10 min (Spam an eine Person blockiert nicht alle anderen),
+   insgesamt höchstens 600/min */
+function pushBudget(r) {
+  if (r && limited('push:' + r.name, 30, 600000)) return false;
   const t = now();
   pushesSent = pushesSent.filter((x) => t - x < 60000);
-  if (pushesSent.length > 120) return false;
+  if (pushesSent.length > 600) return false;
   pushesSent.push(t);
   return true;
+}
+/* Ausgehende Anfragen an vom Nutzer gewählte Server (eigener ntfy): nur an öffentliche Adressen.
+   Die Prüfung sitzt in der DNS-Auflösung der Verbindung selbst – auch ein Name, der auf 127.0.0.1 o. Ä. zeigt, kommt nicht durch. */
+const BLOCKED_NETS = new net.BlockList();
+for (const [a, p] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12],
+  ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 3]]) BLOCKED_NETS.addSubnet(a, p, 'ipv4');
+for (const [a, p] of [['::', 127], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8], ['64:ff9b::', 96], ['2001:db8::', 32]]) BLOCKED_NETS.addSubnet(a, p, 'ipv6');
+function publicIp(ip, family) {
+  const m = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  if (m) return !BLOCKED_NETS.check(m[1], 'ipv4');
+  return !BLOCKED_NETS.check(ip, family === 6 || ip.includes(':') ? 'ipv6' : 'ipv4');
+}
+function publicLookup(host, opts, cb) {
+  if (typeof opts === 'function') { cb = opts; opts = {}; }
+  dns.lookup(host, Object.assign({}, opts, { all: true }), (err, list) => {
+    if (err) return cb(err);
+    const ok = (list || []).filter((x) => publicIp(x.address, x.family));
+    if (!ok.length) return cb(Object.assign(new Error('Adresse nicht öffentlich: ' + host), { code: 'EPRIVATE' }));
+    if (opts && opts.all) return cb(null, ok);
+    cb(null, ok[0].address, ok[0].family);
+  });
 }
 /* Benachrichtigung bei geschlossener App: Timeline-Pin (nur Rebble-App) und/oder Handy-Benachrichtigung
    (ntfy, Telegram-Bot oder Pushover – der Nutzer wählt in den Einstellungen). Die Core-App holt keine
@@ -309,9 +350,11 @@ function pushPhone(r, text) {
   return true;
 }
 function httpsPost(what, r, url, body, headers) {
-  if (!pushBudget()) return;
+  if (!pushBudget(r)) return;
   try {
-    const req = https.request(new URL(url), { method: 'POST', timeout: 10000,
+    const u = new URL(url), host = u.hostname.replace(/^\[|\]$/g, '');
+    if (net.isIP(host) && !publicIp(host, net.isIP(host))) return console.error(what, 'Adresse nicht öffentlich für', r.name);
+    const req = https.request(u, { method: 'POST', timeout: 10000, lookup: publicLookup,
       headers: Object.assign({ 'Content-Length': Buffer.byteLength(body) }, headers) }, (res) => {
       res.resume();
       if (res.statusCode >= 300) console.error(what, res.statusCode, 'für', r.name);
@@ -341,7 +384,7 @@ function telegramChat(bot) {
   });
 }
 function pushPin(r, title, msg) {
-  if (TIMELINE_API === 'off' || !pushBudget()) return;
+  if (TIMELINE_API === 'off' || !pushBudget(r)) return;
   const layout = { type: 'genericPin', title, body: 'New message', tinyIcon: 'system://images/GENERIC_EMAIL' };
   const pin = { id: 'wt-' + msg.id + '-' + r.name, time: new Date(msg.ts).toISOString(), layout,
     createNotification: { layout: { type: 'genericNotification', title, body: 'New message', tinyIcon: 'system://images/GENERIC_EMAIL' } },
@@ -397,6 +440,16 @@ function clientIp(req) {
 
 /* Aufräumen: alte Nachrichten, verwaiste Chats, lange unbeantwortete Einladungen */
 function cleanup() {
+  for (const n in db.freed) if (db.freed[n].until < now()) delete db.freed[n];
+  /* Verwaiste Konten (nie Kontakte, Einladungen, Gruppen, Zweitnamen; lange nicht benutzt) geben Namen und Platz frei –
+     bremst massenhaft angelegte Konten, die MAX_USERS füllen würden */
+  const idle = now() - IDLE_DAYS * 86400000;
+  for (const n in db.users) {
+    const u = db.users[n];
+    if (u.created < idle && u.seen < idle && !Object.keys(u.contacts).length && !u.groups.length && !u.ginv.length && !(u.aliases || []).length) {
+      console.log('Ungenutztes Konto entfernt', n); deleteUser(u, true);
+    }
+  }
   const cut = now() - HISTORY_DAYS * 86400000;
   for (const k in db.chats) {
     const ch = db.chats[k];
@@ -417,7 +470,9 @@ function needName(n) {
 }
 /* Name oder Zweitname → Konto */
 function userByName(n) { return db.users[n] || db.users[byAlias.get(n)] || null; }
-const nameTaken = (n) => RESERVED.has(n) || !!db.users[n] || byAlias.has(n);
+/* by: wer den Namen will – der frühere Besitzer eines entfernten Zweitnamens darf ihn sofort zurückholen */
+const nameTaken = (n, by) => RESERVED.has(n) || !!db.users[n] || byAlias.has(n) || (!!db.freed[n] && db.freed[n].until > now() && db.freed[n].by !== by);
+function holdName(n, by) { db.freed[n] = { until: now() + NAME_HOLD_DAYS * 86400000, by: by || '' }; }
 function otherUser(n) { const r = userByName(needName(n)); if (!r) fail(404, 'Nutzer nicht gefunden'); return r; }
 function unlinkContact(a, b) { delete a.contacts[b.name]; delete b.contacts[a.name]; }
 
@@ -427,7 +482,8 @@ const route = (method, re, auth, fn, max) => routes.push({ method, re, auth, fn,
 route('GET', /^\/v1\/info$/, false, () => serverInfo());
 
 route('POST', /^\/v1\/register$/, false, (req, b) => {
-  if (limited('reg:' + clientIp(req), 20, 3600000) || limited('reg', 100, 3600000)) fail(429, 'Zu viele Registrierungen, bitte später');
+  const ip = clientIp(req), net24 = ip.includes(':') ? ip.split(':').slice(0, 3).join(':') : ip.split('.').slice(0, 3).join('.');
+  if (limited('reg:' + ip, 20, 3600000) || limited('regn:' + net24, 40, 3600000) || limited('reg', 300, 3600000)) fail(429, 'Zu viele Registrierungen, bitte später');
   if (REGISTER_CODE && String(b.code || '') !== REGISTER_CODE) fail(403, 'Registrierungscode falsch');
   const name = needName(b.name);
   if (RESERVED.has(name)) fail(400, 'Dieser Name ist reserviert');
@@ -521,7 +577,18 @@ route('POST', /^\/v1\/me\/telegram$/, true, async (req, b, u) => {
   return meView(u);
 });
 
-function deleteUser(u) {
+/* idle: nie benutzt → Name nicht sperren. Sonst bleibt der Name NAME_HOLD_DAYS gesperrt (niemand kann sich als frühere Person ausgeben),
+   die Gruppennachrichten des Kontos verschwinden, und es steht in keiner Blockliste mehr. */
+function deleteUser(u, idle) {
+  if (!u.test && !idle) { holdName(u.name); for (const a of u.aliases || []) holdName(a); }
+  for (const n in db.users) { const o = db.users[n]; if (o.blocked.includes(u.name)) o.blocked = o.blocked.filter((x) => x !== u.name); }
+  for (const gid of u.groups) {
+    const g = db.groups[gid], ch = g && db.chats['g:' + gid];
+    if (!ch || !ch.msgs.some((m) => m.f === u.name)) continue;
+    ch.msgs = ch.msgs.filter((m) => m.f !== u.name);
+    ch.del = ++db.seq;
+    for (const n of g.members) if (n !== u.name) wake(n);
+  }
   for (const n in u.contacts) if (db.users[n]) delete db.users[n].contacts[u.name];
   for (const gid of u.groups.concat(u.ginv)) leaveGroup(u, db.groups[gid]);
   for (const k in db.chats) if (k.startsWith('d:') && k.slice(2).split('|').includes(u.name)) delete db.chats[k];
@@ -545,7 +612,7 @@ route('POST', /^\/v1\/me\/aliases$/, true, (req, b, u) => {
   const name = needName(b.name);
   if (RESERVED.has(name)) fail(400, 'Dieser Name ist reserviert');
   if (name === u.name || (u.aliases || []).includes(name)) return meView(u);
-  if (nameTaken(name)) fail(409, 'Name schon vergeben');
+  if (nameTaken(name, u.name)) fail(409, 'Name schon vergeben');
   if ((u.aliases || []).length >= ALIASES_MAX) fail(400, 'Zu viele Zweitnamen');
   if (limited('alias:' + u.name, 10, 3600000)) fail(429, 'Zu viele Versuche, bitte später');
   u.aliases = (u.aliases || []).concat(name);
@@ -557,6 +624,7 @@ route('DELETE', /^\/v1\/me\/aliases\/([a-z0-9_]{3,16})$/, true, (req, b, u, m) =
   if (!(u.aliases || []).includes(m[1])) fail(404, 'Nicht gefunden');
   u.aliases = u.aliases.filter((x) => x !== m[1]);
   byAlias.delete(m[1]);
+  if (!u.test) holdName(m[1], u.name);   // Einladungen an den alten Zweitnamen landen nicht bei jemand Neuem
   save();
   return meView(u);
 });
@@ -703,7 +771,7 @@ route('GET', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/messages$/, true, (req, b, 
   const a = chatAccess(u, m[1]);
   if (!a) fail(404, 'Chat nicht gefunden');
   const limit = Math.max(1, Math.min(HISTORY_MAX, Number(q.get('limit')) || HISTORY_MAX));
-  const msgs = ((db.chats[a.key] || {}).msgs || []).slice(-limit).map((x) => msgView(x, u.name));
+  const msgs = ((db.chats[a.key] || {}).msgs || []).filter((x) => visible(u, x)).slice(-limit).map((x) => msgView(x, u.name));
   return { chat: a.cid, title: chatTitle(u, a.cid), read: u.read[a.key] || 0, msgs };
 });
 route('POST', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/messages$/, true, (req, b, u, m) => {
@@ -726,12 +794,17 @@ route('POST', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/audio$/, true, (req, b, u,
   const e = cleanEnc(b.e, [u.name].concat(a.to));
   if (typeof b.audio !== 'string' || b.audio.length < 80 || b.audio.length > AUDIO_B64_MAX || !B64.test(b.audio)) fail(400, 'Ungültige Sprachnachricht');
   if (limited('aud:' + u.name, 20, 600000) || limited('msg:' + u.name, 30, 60000) || limited('msgh:' + u.name, 600, 3600000)) fail(429, 'Zu viele Nachrichten, bitte kurz warten');
+  const day = new Date().toISOString().slice(0, 10);
+  if (!u.audDay || u.audDay.d !== day) u.audDay = { d: day, b: 0 };
+  if (u.audDay.b + b.audio.length > AUDIO_USER_DAY) fail(429, 'Tageslimit für Sprachnachrichten erreicht');
+  if (audioBytes + b.audio.length > AUDIO_TOTAL) { console.error('Audio-Speicher voll', audioBytes); fail(507, 'Speicher für Sprachnachrichten ist voll'); }
+  u.audDay.b += b.audio.length;
   return { msg: msgView(postMessage(u, a, e, false, b.audio), u.name) };
 }, AUDIO_B64_MAX + 8192);
 route('GET', /^\/v1\/chats\/([ug]\.[a-z0-9_]{3,16})\/audio\/(\d{1,12})$/, true, (req, b, u, m) => {
   const a = chatAccess(u, m[1]);
   const msg = a && db.chats[a.key] && db.chats[a.key].msgs.find((x) => x.id === Number(m[2]));
-  if (!msg || !msg.a) fail(404, 'Sprachnachricht nicht gefunden');
+  if (!msg || !msg.a || !visible(u, msg)) fail(404, 'Sprachnachricht nicht gefunden');
   let audio;
   try { audio = fs.readFileSync(path.join(AUDIO_DIR, msg.id + '.b64'), 'utf8'); } catch (e) { fail(404, 'Sprachnachricht nicht gefunden'); }
   return { id: msg.id, audio };
@@ -851,11 +924,13 @@ function pollResult(u, since) {
     for (const cid of chatList(u).map((c) => c.id)) {
       const a = chatAccess(u, cid);
       if (db.chats[a.key] && db.chats[a.key].del > since) del.push(cid);
-      for (const msg of (db.chats[a.key] || { msgs: [] }).msgs) if (msg.id > since && msg.f !== u.name) out.push(Object.assign({ chat: cid }, msgView(msg, u.name)));
+      for (const msg of (db.chats[a.key] || { msgs: [] }).msgs) if (msg.id > since && msg.f !== u.name && visible(u, msg)) out.push(Object.assign({ chat: cid }, msgView(msg, u.name)));
     }
   }
   out.sort((x, y) => x.id - y.id);
-  return { seq: db.seq, msgs: out.slice(-50), del, invites: meView(u).invitesIn.length + u.ginv.length };
+  /* Höchstens 50 auf einmal, die ältesten zuerst; seq zeigt dann auf die letzte gelieferte – die App holt den Rest gleich nach */
+  if (out.length > 50) return { seq: out[49].id, msgs: out.slice(0, 50), del, more: true, invites: meView(u).invitesIn.length + u.ginv.length };
+  return { seq: db.seq, msgs: out, del, invites: meView(u).invitesIn.length + u.ginv.length };
 }
 route('GET', /^\/v1\/poll$/, true, (req, b, u, m, q) => {
   const since = Number(q.get('since')) || 0;
@@ -906,6 +981,7 @@ const EN_ERR = { 'Ungültiges ntfy-Thema (12–64 Zeichen A–Z, 0–9, _ -)': '
   'Sprachnachrichten sind auf diesem Server aus': 'Voice messages are turned off on this server', 'Ungültige Sprachnachricht': 'Invalid voice message',
   'Sprachnachrichten gehen nur, wenn alle eine Uhr mit Lautsprecher und Mikrofon haben': 'Voice messages only work when everyone has a watch with speaker and microphone',
   'Sprachnachricht nicht gefunden': 'Voice message not found',
+  'Tageslimit für Sprachnachrichten erreicht': 'Daily limit for voice messages reached', 'Speicher für Sprachnachrichten ist voll': 'Storage for voice messages is full',
   'Nachricht nicht gefunden': 'Message not found', 'Nur eigene Nachrichten können gelöscht werden': 'You can only delete your own messages', 'Zu groß': 'Too large', 'Serverfehler': 'Server error', 'Admin-Schlüssel falsch': 'Wrong admin key' };
 function english(msg) {
   if (EN_ERR[msg]) return EN_ERR[msg];

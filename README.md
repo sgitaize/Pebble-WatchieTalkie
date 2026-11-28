@@ -76,7 +76,10 @@ Then allow notifications for this app in the Pebble app. **Entirely optional:** 
 - Plain text is rejected, encrypted messages are checked for shape and size; only envelopes for actual chat participants are stored, and each reader receives only their own.
 - Public keys can only be fetched for contacts and group members (no directory for strangers).
 - Names are strictly validated (`a–z 0–9 _`, not starting with `_`, reserved names blocked); all tables have no prototype – `__proto__`/`constructor` tricks don't work.
-- Limits on everything: requests per IP, registrations per IP, messages and invitations per account, body size, number of contacts/groups/accounts, history; timeouts against slow connections.
+- Limits on everything: requests per IP, registrations per IP and network, messages and invitations per account, body size, number of contacts/groups/accounts, history, disk space for voice messages (total and per account and day), notifications per recipient; timeouts against slow connections.
+- A custom ntfy server must be a public address: the check happens when the connection resolves the name, so a hostname pointing to `127.0.0.1` or an internal network is refused too.
+- Blocking also applies in shared groups: you no longer see messages from someone you blocked.
+- Deleted accounts: their group messages disappear, and the name (and removed aliases) can't be registered by someone else for 30 days. Accounts that never had a contact or group and weren't used for 30 days are removed.
 - Static pages with Content-Security-Policy, `X-Frame-Options`, `Referrer-Policy`; the settings page removes tokens/keys from the address bar immediately.
 - Multiple Passenger processes: the first one leads, the others forward via Unix socket (no duplicated state).
 
@@ -110,6 +113,7 @@ docker compose up -d           # port 3000, data in the "data" volume; settings 
 | `HISTORY_MAX` | 50 | Messages per chat |
 | `HISTORY_DAYS` | 30 | Messages older than … days are deleted (voice message files too) |
 | `VOICE` | on | `off` = don't accept voice messages (audio files in `data/audio/`, ≈ 160 KB per 30 s) |
+| `AUDIO_TOTAL_MB` | 500 | Upper limit for all voice message files together; beyond it new voice messages are refused (each account: at most 15 MB per day) |
 | `TIMELINE_API` | `https://timeline-api.rebble.io` | Timeline service for notifications (Rebble app only), `off` = disabled |
 | `NTFY_URL` | `https://ntfy.sh` | Suggested ntfy server for phone notifications, `off` = ntfy disabled (users can enter their own https server) |
 | `PUSHOVER_TOKEN` | – | Pushover application token for all users (otherwise everyone enters their own) |

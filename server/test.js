@@ -12,8 +12,9 @@ const path = require('path');
 let base = process.argv[2];
 let child = null, checks = 0, failed = 0;
 const ok = (cond, msg) => { checks++; if (!cond) { failed++; console.log('✗ ' + msg); } };
+let apiIp = '';   // optional eigene Client-IP (X-Forwarded-For), damit das allgemeine Limit je IP die späten Tests nicht bremst
 async function api(method, p, body, token) {
-  const r = await fetch(base + p, { method, headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}),
+  const r = await fetch(base + p, { method, headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}, apiIp ? { 'X-Forwarded-For': apiIp } : {}),
     body: body ? JSON.stringify(body) : undefined });
   let j = null; try { j = await r.json(); } catch (e) { /* leer */ }
   return { status: r.status, body: j };
@@ -28,7 +29,7 @@ async function main() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-'));
     for (const f of ['server.js', 'pages']) fs.cpSync(path.join(__dirname, f), path.join(dir, f), { recursive: true });
     const port = 30000 + Math.floor(Math.random() * 20000);
-    child = spawn(process.execPath, [path.join(dir, 'server.js')], { env: Object.assign({}, process.env, { PORT: port, TIMELINE_API: 'off', ADMIN_KEY: 'test-admin-key' }), stdio: 'inherit' });
+    child = spawn(process.execPath, [path.join(dir, 'server.js')], { env: Object.assign({}, process.env, { PORT: port, TIMELINE_API: 'off', ADMIN_KEY: 'test-admin-key', AUDIO_TOTAL_MB: '0.05' }), stdio: 'inherit' });
     base = 'http://127.0.0.1:' + port;
     for (let i = 0; i < 50; i++) { try { await fetch(base + '/v1/info'); break; } catch (e) { await new Promise((r) => setTimeout(r, 100)); } }
   }
@@ -129,9 +130,9 @@ async function main() {
   ok(st1.messages === st0.messages && st1.voice === st0.voice, 'Testkonten zählen nicht in der Statistik');
   ok(Array.isArray(st1.days) && st1.days.length === 14 && st1.days[13].day === new Date().toISOString().slice(0, 10) && typeof st1.audio === 'number', 'Statistik: 14-Tage-Zeitleiste und Audio-Zähler');
   // nur lokal: echte Konten würden die Live-Statistik verändern
-  if (child) { const rx = await api('POST', '/v1/register', { name: 'tx_' + sfx }); const rz = await api('POST', '/v1/register', { name: 'tz_' + sfx });
-    await api('POST', '/v1/contacts', { name: 'tz_' + sfx }, rx.body.token); await api('POST', '/v1/contacts/tx_' + sfx + '/accept', null, rz.body.token);
-    await api('POST', '/v1/chats/u.tz_' + sfx + '/messages', { e: enc(['tx_' + sfx, 'tz_' + sfx]), voice: true }, rx.body.token);
+  if (child) { const rx = await api('POST', '/v1/register', { name: 'sx_' + sfx }); const rz = await api('POST', '/v1/register', { name: 'sz_' + sfx });
+    await api('POST', '/v1/contacts', { name: 'sz_' + sfx }, rx.body.token); await api('POST', '/v1/contacts/sx_' + sfx + '/accept', null, rz.body.token);
+    await api('POST', '/v1/chats/u.sz_' + sfx + '/messages', { e: enc(['sx_' + sfx, 'sz_' + sfx]), voice: true }, rx.body.token);
     const st2 = (await api('GET', '/v1/stats')).body;
     ok(st2.messages === st0.messages + 1 && st2.voice === st0.voice + 1 && st2.users === st0.users + 2, 'Statistik zählt echte Nachrichten, Sprache und Nutzer');
     await api('DELETE', '/v1/me', null, rx.body.token); await api('DELETE', '/v1/me', null, rz.body.token); }
@@ -339,6 +340,60 @@ async function main() {
     const note = (r) => (r.body.msgs || r.body.messages || []).some((x) => x.f === 'watchietalkie' && x.t === 'ra_' + sfx + ' reset their account');
     ok(note(dm) && note(gm), 'Reset: Hinweis im Direktchat und in der Gruppe');
     await adm('DELETE', '/v1/admin/users/ra_' + sfx, 'test-admin-key'); await adm('DELETE', '/v1/admin/users/rb_' + sfx, 'test-admin-key');
+
+    // ---- Härtung 1.12.2 (eigene Test-IP per X-Forwarded-For, damit das Registrierungslimit je IP nicht greift)
+    const reg = (name, ip) => fetch(base + '/v1/register', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': ip },
+      body: JSON.stringify({ name }) }).then((x) => x.json());
+    apiIp = '203.0.113.50';
+    const [P, Q, R] = ['hp_' + sfx, 'hq_' + sfx, 'hr_' + sfx];
+    const [tp, tq, tr] = [(await reg(P, '203.0.113.7')).token, (await reg(Q, '203.0.113.8')).token, (await reg(R, '198.51.100.9')).token];
+    for (const [x, t] of [[Q, tq], [R, tr]]) { await api('POST', '/v1/contacts', { name: x }, tp); await api('POST', '/v1/contacts/' + P + '/accept', null, t); }
+    const hg = (await api('POST', '/v1/groups', { title: 'Härtung', members: [Q, R] }, tp)).body.groups[0].id;
+    await api('POST', '/v1/groups/' + hg + '/accept', null, tq); await api('POST', '/v1/groups/' + hg + '/accept', null, tr);
+    // Blockieren wirkt auch in gemeinsamen Gruppen: P blockiert R, sieht R's Gruppennachrichten nicht mehr, Q schon
+    const s0 = (await api('GET', '/v1/chats', null, tp)).body.seq;
+    await api('POST', '/v1/blocks', { name: R }, tp);
+    await api('POST', '/v1/chats/g.' + hg + '/messages', { e: enc([P, Q, R]) }, tr);
+    let h = await api('GET', '/v1/chats/g.' + hg + '/messages', null, tp);
+    ok(h.status === 200 && !h.body.msgs.some((x) => x.f === R), 'Block: Gruppennachricht des Blockierten unsichtbar');
+    h = await api('GET', '/v1/poll?since=' + s0, null, tp);
+    ok(!h.body.msgs.some((x) => x.f === R), 'Block: nicht im Polling');
+    h = await api('GET', '/v1/chats', null, tp);
+    ok(h.body.chats.find((x) => x.id === 'g.' + hg).unread === 0, 'Block: zählt nicht als ungelesen');
+    ok((await api('GET', '/v1/chats/g.' + hg + '/messages', null, tq)).body.msgs.some((x) => x.f === R), 'Block: andere sehen sie weiter');
+    // Polling liefert bei mehr als 50 neuen Nachrichten die ältesten 50 und dann den Rest
+    const s1 = (await api('GET', '/v1/chats', null, tr)).body.seq;
+    await api('DELETE', '/v1/blocks/' + R, null, tp);
+    await api('POST', '/v1/contacts', { name: R }, tp); await api('POST', '/v1/contacts/' + P + '/accept', null, tr);   // nach dem Blockieren wieder Kontakte
+    for (let i = 0; i < 28; i++) { await api('POST', '/v1/chats/u.' + R + '/messages', { e: enc([P, R]) }, tp); await api('POST', '/v1/chats/g.' + hg + '/messages', { e: enc([P, Q, R]) }, tq); }
+    h = await api('GET', '/v1/poll?since=' + s1, null, tr);
+    ok(h.body.msgs.length === 50 && h.body.more === true && h.body.seq === h.body.msgs[49].id, 'Poll: erst 50, seq auf der letzten');
+    const h2 = await api('GET', '/v1/poll?since=' + h.body.seq, null, tr);
+    ok(h2.body.msgs.length === 6 && !h2.body.more && h2.body.msgs[0].id > h.body.seq, 'Poll: Rest danach');
+    // Speichergrenze Audio (Testserver: AUDIO_TOTAL_MB=0.05 ≈ 52 KB)
+    for (const t of [tp, tq, tr]) await api('PUT', '/v1/me', { dev: { spk: true, rec: true } }, t);
+    let full = 0;
+    for (let i = 0; i < 7 && !full; i++) { const x = await api('POST', '/v1/chats/g.' + hg + '/audio', { e: enc([P, Q, R]), audio: rnd(9000) }, tr); if (x.status === 507) full = i; }
+    ok(full >= 3, 'Audio: Speichergrenze greift (507)');
+    // Gelöschtes Konto: Gruppennachrichten weg, Name gesperrt, aus Blocklisten entfernt
+    await api('POST', '/v1/blocks', { name: Q }, tr);
+    await api('POST', '/v1/me/aliases', { name: 'ha_' + sfx }, tq);
+    await api('DELETE', '/v1/me', null, tq);
+    ok(!(await api('GET', '/v1/chats/g.' + hg + '/messages', null, tp)).body.msgs.some((x) => x.f === Q), 'Löschung: Gruppennachrichten entfernt');
+    ok(!(await api('GET', '/v1/me', null, tr)).body.blocked.includes(Q), 'Löschung: aus Blocklisten entfernt');
+    ok((await fetch(base + '/v1/register', { method: 'POST', headers: { 'X-Forwarded-For': '203.0.113.20' }, body: JSON.stringify({ name: Q }) })).status === 409, 'Löschung: Name gesperrt');
+    ok((await fetch(base + '/v1/register', { method: 'POST', headers: { 'X-Forwarded-For': '203.0.113.21' }, body: JSON.stringify({ name: 'ha_' + sfx }) })).status === 409, 'Löschung: Zweitname gesperrt');
+    // Entfernter Zweitname: für andere gesperrt, der frühere Besitzer darf ihn zurückholen
+    await api('POST', '/v1/me/aliases', { name: 'hb_' + sfx }, tp); await api('DELETE', '/v1/me/aliases/hb_' + sfx, null, tp);
+    ok((await api('POST', '/v1/me/aliases', { name: 'hb_' + sfx }, tr)).status === 409, 'Zweitname: für andere gesperrt');
+    ok((await api('POST', '/v1/me/aliases', { name: 'hb_' + sfx }, tp)).status === 200, 'Zweitname: Besitzer holt ihn zurück');
+    // Eigener ntfy-Server, dessen Name auf 127.0.0.1 zeigt: wird nicht angefragt (Log), nur wenn DNS erreichbar ist
+    await api('PUT', '/v1/me', { cfg: { push: 'ntfy', ntfy: 'wt-abcdefghijkl', ntfyUrl: 'https://localtest.me' } }, tr);
+    await api('POST', '/v1/test', { delay: 0 }, tr);
+    await new Promise((x) => setTimeout(x, 1500));
+    const log = fs.readFileSync(path.join(path.dirname(child.spawnargs[1]), 'logs', 'app.log'), 'utf8');
+    ok(/Adresse nicht öffentlich: localtest\.me|ENOTFOUND|EAI_AGAIN/.test(log), 'ntfy: interne Adresse per DNS-Name abgelehnt');
+    for (const t of [tp, tr]) await api('DELETE', '/v1/me', null, t);
   }
 }
 
