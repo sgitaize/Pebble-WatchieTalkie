@@ -393,6 +393,12 @@ async function main() {
     await new Promise((x) => setTimeout(x, 1500));
     const log = fs.readFileSync(path.join(path.dirname(child.spawnargs[1]), 'logs', 'app.log'), 'utf8');
     ok(/Adresse nicht öffentlich: localtest\.me|ENOTFOUND|EAI_AGAIN/.test(log), 'ntfy: interne Adresse per DNS-Name abgelehnt');
+    // Melden: wird gespeichert und erscheint auf der Admin-Seite
+    ok((await api('POST', '/v1/report', { kind: 'message', about: P }, tr)).status === 400, 'Melden: ohne Grund abgelehnt');
+    h = await api('POST', '/v1/report', { kind: 'message', about: P, chat: 'u.' + P, msg: 5, reason: 'spam', text: 'buy now' }, tr);
+    ok(h.status === 200 && h.body.ok, 'Melden: angenommen');
+    const al = await adm('GET', '/v1/admin/users', 'test-admin-key');
+    ok(al.body.reports[0].from === R && al.body.reports[0].about === P && al.body.reports[0].text === 'buy now', 'Melden: auf der Admin-Seite');
     for (const t of [tp, tr]) await api('DELETE', '/v1/me', null, t);
   }
 }

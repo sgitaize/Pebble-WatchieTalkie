@@ -52,6 +52,7 @@ Then allow notifications for this app in the Pebble app. **Entirely optional:** 
 | `watch/` | Pebble app: `src/c/main.c` (watch), `src/pkjs/index.js` (phone), `src/pkjs/e2e.js` (encryption), `src/pkjs/nacl-fast.js` (TweetNaCl) |
 | `server/` | Server (`server.js`), home page, legal notice/privacy/disclaimer, API test (`test.js`) |
 | `docs/` | GitHub Pages: home page and settings page (`docs/config/`) |
+| `applewatch/` | Apple Watch app (SwiftUI, watchOS 10+): same server, same encryption – see [applewatch/README.md](applewatch/README.md) |
 | `store/` | Store texts, icons, banners |
 
 ## Usage
@@ -119,6 +120,7 @@ docker compose up -d           # port 3000, data in the "data" volume; settings 
 | `PUSHOVER_TOKEN` | – | Pushover application token for all users (otherwise everyone enters their own) |
 | `SERVER_NAME` | WatchieTalkie2 | Display name |
 | `DONATE_URL` | project donation link | Donate button on the info page, `off` = hidden |
+| `REPORT_NTFY` | – | ntfy topic (or https URL) that receives reports and feedback from the apps (alternatively put it into `server/data/report-ntfy`); reports also show up on `/admin` |
 | `ADMIN_KEY` | – | Enables the operator page `/admin` (alternatively put the SHA-256 hex of the key into `server/data/admin-key`). Without it there is no admin page. |
 
 Data is stored in `server/data/db.json` (ciphertext only) – copy the file to back it up. **If you run a public server, you must replace `public/impressum.html` (legal notice) with your own details.**

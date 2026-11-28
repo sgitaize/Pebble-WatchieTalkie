@@ -51,6 +51,8 @@
       </div>
       <p class="muted" style="margin:0 0 8px">"Unsaved" = no public key: the account was created but never saved to a phone, so nobody can log in to it.</p>
       <div class="tbl"><table><thead><tr><th>Name</th><th>Aliases</th><th>Created</th><th>Last seen</th><th>Contacts</th><th>Invites in/out</th><th>Groups</th><th>Push</th><th></th></tr></thead><tbody id="users"></tbody></table></div>
+      <h2>Reports &amp; feedback <span class="muted" id="repPush"></span></h2>
+      <div class="tbl"><table><thead><tr><th>Time</th><th>Kind</th><th>From</th><th>About</th><th>Chat</th><th>Reason</th><th>Message text</th></tr></thead><tbody id="reports"></tbody></table></div>
     </section>
   </div>
   <p id="msg"></p>
@@ -112,6 +114,14 @@ function render() {
     td.appendChild(rb); td.appendChild(b); tr.appendChild(td); tb.appendChild(tr);
   }
   if (!tb.children.length) tb.innerHTML = '<tr><td colspan="9" class="muted">No accounts</td></tr>';
+  const rb = $('reports'); rb.innerHTML = '';
+  $('repPush').textContent = data.reportPush ? '(push to operator on)' : '(no push: set REPORT_NTFY or data/report-ntfy)';
+  for (const r of data.reports || []) {
+    const tr = document.createElement('tr');
+    for (const c of [fmt(r.ts), r.kind, r.from, r.about || '–', r.chat || '–', r.reason || '–', r.text || '–']) { const td = document.createElement('td'); td.textContent = c; tr.appendChild(td); }
+    rb.appendChild(tr);
+  }
+  if (!rb.children.length) rb.innerHTML = '<tr><td colspan="7" class="muted">No reports</td></tr>';
 }
 /* Konto zurücksetzen: Server gibt neuen Token, der geheime Schlüssel entsteht hier im Browser (Server sieht ihn nie) */
 async function reset(name) {

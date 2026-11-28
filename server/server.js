@@ -21,6 +21,7 @@
  *   VOICE             "off" = keine Sprachnachrichten (Audio) annehmen
  *   ADMIN_KEY         Schlüssel für die Betreiber-Seite /admin (alternativ SHA-256 davon in data/admin-key; ohne = keine Admin-Seite)
  *   AUDIO_TOTAL_MB    Obergrenze für alle Sprachnachrichten auf der Platte (Standard 500)
+ *   REPORT_NTFY       ntfy-Thema oder https-Adresse, an die Meldungen (Melden-Knopf) gehen (alternativ Datei data/report-ntfy)
  */
 'use strict';
 const http = require('http');
@@ -49,7 +50,7 @@ const origLog = console.log, origErr = console.error;
 console.log = (...a) => { logLine('INFO', a); origLog(...a); };
 console.error = (...a) => { logLine('ERROR', a); origErr(...a); };
 
-const VERSION = '1.12.2';
+const VERSION = '1.13.0';
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
@@ -89,7 +90,7 @@ const DEFAULT_CFG = { qr: ['OK', 'On my way', 'Call me', 'Later', 'Yes', 'No', '
 /* Alle Nachschlage-Tabellen ohne Prototyp: Namen wie "constructor" oder "__proto__" können nichts manipulieren */
 const dict = (o) => Object.assign(Object.create(null), o || {});
 function loadDb() {
-  const d = { seq: 0, users: dict(), groups: dict(), chats: dict(), freed: dict(), stats: { messages: 0, voice: 0, audio: 0, since: Date.now(), days: dict() } };
+  const d = { seq: 0, users: dict(), groups: dict(), chats: dict(), freed: dict(), reports: [], stats: { messages: 0, voice: 0, audio: 0, since: Date.now(), days: dict() } };
   try {
     const j = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     d.seq = Number(j.seq) || 0;
@@ -97,6 +98,7 @@ function loadDb() {
       days: dict(j.stats.days && typeof j.stats.days === 'object' ? j.stats.days : {}) };
     for (const n of Object.keys(j.users || {})) { const u = j.users[n]; u.contacts = dict(u.contacts); u.read = dict(u.read); d.users[n] = u; }
     d.groups = dict(j.groups); d.chats = dict(j.chats); d.freed = dict(j.freed);
+    d.reports = Array.isArray(j.reports) ? j.reports.slice(-200) : [];
   } catch (e) { if (e.code !== 'ENOENT') console.error('db.json nicht lesbar', e.message); }
   return d;
 }
@@ -838,6 +840,32 @@ route('POST', /^\/v1\/test$/, true, (req, b, u) => {
   setTimeout(() => { if (db.users[name]) systemMessage(db.users[name], text); }, delay * 1000);
   return { ok: true, delay };
 });
+/* Melden (Nutzer, Nachricht oder Rückmeldung): geht als ntfy-Push an den Betreiber und steht auf /admin.
+   Wer eine Nachricht meldet, kann ihren entschlüsselten Text mitschicken – nur so kann der Betreiber sie überhaupt prüfen. */
+function reportUrl() {
+  let t = process.env.REPORT_NTFY || '';
+  if (!t) try { t = fs.readFileSync(path.join(DATA, 'report-ntfy'), 'utf8').trim(); } catch (e) { return ''; }
+  if (/^https:\/\//.test(t)) return t;
+  return /^[A-Za-z0-9_-]{12,64}$/.test(t) && NTFY_URL !== 'off' ? NTFY_URL + '/' + t : '';
+}
+route('POST', /^\/v1\/report$/, true, (req, b, u) => {
+  if (limited('rep:' + u.name, 10, 3600000)) fail(429, 'Zu viele Anfragen');
+  const kind = ['user', 'message', 'feedback'].includes(b.kind) ? b.kind : 'feedback';
+  const about = b.about ? needName(b.about) : '';
+  const chat = typeof b.chat === 'string' && /^[ug]\.[a-z0-9_]{3,16}$/.test(b.chat) ? b.chat : '';
+  const reason = cleanText(b.reason, 200), text = cleanText(b.text, 600);
+  if (!reason && !text) fail(400, 'Bitte einen Grund angeben');
+  const r = { ts: now(), from: u.name, kind, about, chat, msg: Number.isInteger(b.msg) ? b.msg : 0, reason, text };
+  db.reports.push(r);
+  if (db.reports.length > 200) db.reports.shift();
+  save();
+  console.log('Meldung', kind, 'von', u.name, about ? 'über ' + about : '');
+  const url = reportUrl();
+  if (url) httpsPost('Meldung', { name: '_operator' }, url, (kind === 'feedback' ? 'Feedback' : 'Report') + ' from ' + u.name + (about ? ' about ' + about : '') +
+    (chat ? ' (' + chat + ')' : '') + (reason ? ': ' + reason : '') + (text ? '\n"' + text + '"' : ''),
+    { 'Content-Type': 'text/plain; charset=utf-8', Title: 'WatchieTalkie2 ' + (kind === 'feedback' ? 'feedback' : 'report'), Tags: kind === 'feedback' ? 'speech_balloon' : 'warning', Priority: kind === 'feedback' ? '3' : '4' });
+  return { ok: true };
+});
 /* Alles Neue seit "since" (Nachrichten-Nummer) – ein Aufruf reicht fürs Polling */
 /* Öffentliche Statistik für die Info-Seite (nur Zähler, nichts Persönliches) */
 route('GET', /^\/v1\/stats$/, false, () => ({ users: Object.values(db.users).filter((x) => !x.test).length, groups: Object.keys(db.groups).length,
@@ -872,7 +900,8 @@ route('GET', /^\/v1\/admin\/users$/, false, (req) => {
   const us = Object.values(db.users);
   return { version: VERSION, users: us.map(adminUser).sort((a, b) => b.created - a.created),
     stats: { users: us.filter((x) => !x.test).length, test: us.filter((x) => x.test).length, groups: Object.keys(db.groups).length,
-      chats: Object.keys(db.chats).length, messages: db.stats.messages, voice: db.stats.voice, audio: db.stats.audio, since: db.stats.since } };
+      chats: Object.keys(db.chats).length, messages: db.stats.messages, voice: db.stats.voice, audio: db.stats.audio, since: db.stats.since },
+    reports: db.reports.slice(-50).reverse(), reportPush: !!reportUrl() };
 });
 route('DELETE', /^\/v1\/admin\/users\/([a-z0-9_]{3,16})$/, false, (req, b, u, m) => {
   needAdmin(req);
@@ -980,7 +1009,7 @@ const EN_ERR = { 'Ungültiges ntfy-Thema (12–64 Zeichen A–Z, 0–9, _ -)': '
   'Ungültige Adresse': 'Invalid address', 'Nicht gefunden': 'Not found', 'Zu viele Anfragen': 'Too many requests', 'Nur der Besitzer der Gruppe darf das': 'Only the group owner can do that',
   'Sprachnachrichten sind auf diesem Server aus': 'Voice messages are turned off on this server', 'Ungültige Sprachnachricht': 'Invalid voice message',
   'Sprachnachrichten gehen nur, wenn alle eine Uhr mit Lautsprecher und Mikrofon haben': 'Voice messages only work when everyone has a watch with speaker and microphone',
-  'Sprachnachricht nicht gefunden': 'Voice message not found',
+  'Sprachnachricht nicht gefunden': 'Voice message not found', 'Bitte einen Grund angeben': 'Please give a reason',
   'Tageslimit für Sprachnachrichten erreicht': 'Daily limit for voice messages reached', 'Speicher für Sprachnachrichten ist voll': 'Storage for voice messages is full',
   'Nachricht nicht gefunden': 'Message not found', 'Nur eigene Nachrichten können gelöscht werden': 'You can only delete your own messages', 'Zu groß': 'Too large', 'Serverfehler': 'Server error', 'Admin-Schlüssel falsch': 'Wrong admin key' };
 function english(msg) {
