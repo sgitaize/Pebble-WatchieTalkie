@@ -26,3 +26,4 @@ targets:
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "4"
         GCC_WARN_INHIBIT_ALL_WARNINGS: NO
+        SKIP_INSTALL: NO
